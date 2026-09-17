@@ -1,0 +1,31 @@
+# =============================================================================
+# NIFTY 100 Swing Trading Assistant — .gitignore
+# =============================================================================
+
+# --- Secrets (never commit) --------------------------------------------------
+.env
+
+# --- Python ------------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Runtime data (SQLite DBs, LangGraph checkpoints) ------------------------
+# Keep the folders (via .gitkeep), ignore their contents.
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# --- Archived / local-only ----------------------------------------------------
+legacy/
+
+# --- OS / editor ---------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

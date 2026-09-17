@@ -1,0 +1,41 @@
+# =============================================================================
+# NIFTY 100 Swing Trading Assistant — Docker Compose
+#
+# Single service:
+#   trading-engine : LangGraph pipeline + Telegram long-polling bot. Telegram
+#                    is the complete control plane (/scan, /run, /trades,
+#                    approval buttons) — no web port is exposed.
+#
+# The audit DB and checkpoints live on the persistent ./data volume.
+# =============================================================================
+
+services:
+  trading-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nifty-swing-trading:latest
+    container_name: nifty-trading-engine
+    command: ["python", "-m", "app.main", "serve"]
+    env_file:
+      - .env
+    environment:
+      # Ensure the MCP filesystem server can resolve the workspace root.
+      WORKSPACE_ROOT: /app
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # Long polling means no inbound ports are required for Telegram.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import app.executor as e; e.init_db()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - trading-net
+
+networks:
+  trading-net:
+    driver: bridge

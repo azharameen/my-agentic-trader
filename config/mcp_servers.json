@@ -1,0 +1,44 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schemas/server-config.json",
+  "_comment": "Model Context Protocol client configuration. Each entry defines a stdio MCP server the app can spawn on demand to load dynamic tools. Servers are opt-in: the trading engine only connects to a server when a node explicitly requests its tools. In PAPER_TRADING mode the broker (groww) server stays disabled.",
+  "mcpServers": {
+    "groww": {
+      "description": "Local Groww broker MCP server for order routing. DISABLED by default in paper mode; enable only after the broker adapter is proven.",
+      "command": "python",
+      "args": ["-m", "groww_mcp_server"],
+      "env": {
+        "GROWW_API_KEY": "${GROWW_API_KEY}",
+        "GROWW_API_SECRET": "${GROWW_API_SECRET}"
+      },
+      "disabled": true
+    },
+    "brave-search": {
+      "description": "Web search MCP for regulatory filings, corporate disclosures and news catalysts. Used by the analyst node.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
+      "disabled": false
+    },
+    "duckduckgo": {
+      "description": "Fallback zero-key web search MCP. Used when Brave is not configured.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-duckduckgo"],
+      "env": {},
+      "disabled": false
+    },
+    "filesystem": {
+      "description": "Local filesystem MCP for reading/writing logs and audit artifacts.",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${WORKSPACE_ROOT}/logs",
+        "${WORKSPACE_ROOT}/data"
+      ],
+      "env": {},
+      "disabled": false
+    }
+  }
+}

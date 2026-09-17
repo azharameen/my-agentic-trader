@@ -1,0 +1,27 @@
+# =============================================================================
+# NIFTY 100 Swing Trading Assistant — Python dependencies (Python 3.11+)
+# =============================================================================
+
+# --- Core data & math -------------------------------------------------------
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance>=0.2.40
+pandas-ta>=0.3.14b0
+
+# --- LLM (qualitative research filter) -------------------------------------
+langchain>=0.2.0
+langchain-openai>=0.2.0
+
+# --- LangGraph (state machine, checkpoints, HITL interrupts) ---------------
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite>=1.0.0
+
+# --- Configuration ----------------------------------------------------------
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# --- Human-in-the-Loop (Telegram) ------------------------------------------
+python-telegram-bot>=21.0
+
+# --- Scheduling (optional, for the daily EOD job) ---------------------------
+apscheduler>=3.10.0
