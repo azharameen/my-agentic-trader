@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import logging
 
-from config.settings import get_settings
 from app import broker, executor, screener
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

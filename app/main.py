@@ -24,8 +24,8 @@ import sys
 import threading
 from typing import Optional
 
-from config.settings import get_settings
 from app import executor, observability, pipeline, telegram_bot, universe
+from config.settings import get_settings
 
 logging.basicConfig(
     level=logging.INFO,

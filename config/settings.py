@@ -179,6 +179,22 @@ class Settings(BaseSettings):
         default=0.02,
         description="Price must have moved less than this fraction from the proposed entry for a stale-but-recent approval to still execute.",
     )
+    CORPORATE_EVENT_BLACKOUT_DAYS: int = Field(
+        default=10,
+        description="Projected holding window used for earnings and board-event vetoes.",
+    )
+    CORPORATE_EVENTS_ENABLED: bool = Field(
+        default=False,
+        description="Enable configured corporate-event source collection.",
+    )
+    CORPORATE_EVENTS_SOURCE_URL: str = Field(
+        default="",
+        description="Configured corporate-event JSON/CSV source URL; empty disables collection.",
+    )
+    CORPORATE_EVENTS_CACHE_PATH: str = Field(
+        default="data/corporate_events.json",
+        description="Local cache for normalized corporate events.",
+    )
     SCAN_CRON_HOUR: int = Field(
         default=15,
         description="Hour (IST, 24h) of the daily automatic universe scan.",

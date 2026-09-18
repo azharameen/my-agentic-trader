@@ -16,8 +16,17 @@ import logging
 import threading
 from typing import Optional
 
+from app import (
+    corporate_events,
+    graph,
+    monitor,
+    news,
+    observability,
+    outbox,
+    screener,
+    telegram_bot,
+)
 from config.settings import get_settings
-from app import graph, monitor, news, observability, outbox, screener, telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,7 @@ def process_symbol(
     symbol: str,
     news_headlines: Optional[list[str]] = None,
     snapshot: Optional[dict] = None,
+    events: Optional[list[corporate_events.CorporateEvent]] = None,
 ) -> dict:
     """Run one symbol through the graph and push any proposal to Telegram.
 
@@ -60,7 +70,7 @@ def process_symbol(
         try:
             if news_headlines is None:
                 news_headlines = news.fetch_headlines(symbol)
-            state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot)
+            state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot, events=events)
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not kill a scan
             logger.exception("Failed to process %s", symbol)
             return {"execution_details": {"status": "ERROR", "error": str(exc)}}
@@ -95,6 +105,7 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
             _notify_closed_trades(closed)
 
             logger.info("Scanning universe (%d symbols)...", len(universe_symbols))
+            events = corporate_events.fetch_events()
             qualifiers = screener.scan_nifty_universe(universe_symbols)
             logger.info("%d symbols qualified for analysis.", len(qualifiers))
 
@@ -102,7 +113,12 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
             for row in qualifiers:
                 try:
                     headlines = news.fetch_headlines(row["symbol"])
-                    state = process_symbol(row["symbol"], news_headlines=headlines, snapshot=row)
+                    state = process_symbol(
+                        row["symbol"],
+                        news_headlines=headlines,
+                        snapshot=row,
+                        events=events,
+                    )
                 except Exception:  # noqa: BLE001 - continue the rest of the universe
                     logger.exception("Universe scan failed for %s", row["symbol"])
                     continue

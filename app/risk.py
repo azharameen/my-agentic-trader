@@ -22,10 +22,52 @@ import logging
 import math
 from typing import Optional
 
-from config.settings import get_settings
+from pydantic import BaseModel
+
 from app.state import TradeProposal
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+class DeliveryCosts(BaseModel):
+    """Conservative paper-model delivery charges in INR."""
+
+    stt: float
+    exchange_charges: float
+    sebi_charges: float
+    gst: float
+    stamp_duty: float
+    total: float
+
+
+def market_safety_rejection(
+    *, circuit_locked: bool = False, asm_gsm_flag: bool = False
+) -> Optional[str]:
+    if circuit_locked:
+        return "CIRCUIT_LOCKED"
+    if asm_gsm_flag:
+        return "ASM_GSM_SURVEILLANCE"
+    return None
+
+
+def calculate_delivery_costs(buy_value: float, sell_value: float) -> DeliveryCosts:
+    """Calculate delivery friction without any broker or LLM dependency."""
+    turnover = buy_value + sell_value
+    stt = turnover * 0.001
+    exchange_charges = turnover * 0.0000325
+    sebi_charges = turnover * 0.000001
+    stamp_duty = buy_value * 0.00015
+    gst = (exchange_charges + sebi_charges) * 0.18
+    total = stt + exchange_charges + sebi_charges + gst + stamp_duty
+    return DeliveryCosts(
+        stt=round(stt, 2),
+        exchange_charges=round(exchange_charges, 2),
+        sebi_charges=round(sebi_charges, 2),
+        gst=round(gst, 2),
+        stamp_duty=round(stamp_duty, 2),
+        total=round(total, 2),
+    )
 
 
 def calculate_risk(

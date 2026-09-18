@@ -15,7 +15,9 @@ SQLite checkpoints.
 
 from __future__ import annotations
 
-from typing import Literal, Optional, TypedDict
+import operator
+from datetime import datetime
+from typing import Annotated, Literal, Optional, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +76,23 @@ class TradeProposal(BaseModel):
     risk_to_reward: float = Field(description="Computed R:R ratio (must be >= 2.0).")
 
 
+class ProposalCard(TradeProposal):
+    """Validated payload shared by the graph pause and Telegram renderers."""
+
+    thesis: str
+    catalyst_type: str
+    proposed_at: datetime
+
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
+    def __contains__(self, key: str) -> bool:
+        return hasattr(self, key)
+
+
 # --------------------------------------------------------------------------- #
 # LangGraph shared state
 # --------------------------------------------------------------------------- #
@@ -104,6 +123,13 @@ class TradingState(TypedDict, total=False):
     news_headlines: list[str]
     catalyst_assessment: Optional[CatalystAssessment]
     order_proposal: Optional[TradeProposal]
-    proposal_card: Optional[dict]
+    proposal_card: Optional[ProposalCard]
     human_decision: Optional[str]
     execution_details: Optional[dict]
+    evidence_snapshot_id: Optional[str]
+    source_set: list[str]
+    strategy_name: Optional[str]
+    market_regime: Optional[str]
+    corporate_events: list[dict]
+    analyst_verdicts: Annotated[list[dict], operator.add]
+    approved_orders: Annotated[list[dict], operator.add]

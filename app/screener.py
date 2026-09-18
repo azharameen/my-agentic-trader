@@ -16,24 +16,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Optional
 
 import pandas as pd
-import yfinance as yf
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from config.settings import get_settings
+from app import market_data
 from app.strategies import get_setup_strategy
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 
-@retry(
-    reraise=True,
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=6),
-    retry=retry_if_exception_type(Exception),
-)
-def _download(nse_symbol: str, period: str) -> pd.DataFrame:
-    """yfinance download with retry/backoff for transient network errors."""
-    return yf.download(nse_symbol, period=period, interval="1d", auto_adjust=True, progress=False)
+def _load_history(nse_symbol: str, period: str) -> market_data.MarketDataResult:
+    return market_data.load_history(nse_symbol, period)
 
 
 def _to_nse_symbol(symbol: str) -> str:
@@ -116,19 +108,12 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
     settings = get_settings()
     nse_symbol = _to_nse_symbol(symbol)
     try:
-        df = _download(nse_symbol, settings.HISTORY_PERIOD)
+        result = _load_history(nse_symbol, settings.HISTORY_PERIOD)
     except Exception as exc:  # noqa: BLE001 - network errors are expected
         logger.warning("Failed to download %s: %s", nse_symbol, exc)
         return None
 
-    if df is None or df.empty:
-        logger.warning("No data returned for %s.", nse_symbol)
-        return None
-
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    df = _compute_indicators(df)
+    df = _compute_indicators(result.frame)
     latest = df.iloc[-1]
     return {
         "symbol": symbol.strip().upper(),
@@ -139,6 +124,8 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
         "volume": float(latest["volume"]),
         "avg_volume_20": float(latest["avg_volume_20"]),
         "qualifies": bool(_passes_setup_filter(latest)),
+        "data_source": result.source,
+        "data_fetched_at": result.fetched_at.isoformat(),
     }
 
 
@@ -171,20 +158,12 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
     def _screen_one(raw_symbol: str) -> Optional[dict]:
         nse_symbol = _to_nse_symbol(raw_symbol)
         try:
-            df = _download(nse_symbol, settings.HISTORY_PERIOD)
+            result = _load_history(nse_symbol, settings.HISTORY_PERIOD)
         except Exception as exc:  # noqa: BLE001 - network errors are expected
             logger.warning("Failed to download %s: %s", nse_symbol, exc)
             return None
 
-        if df is None or df.empty:
-            logger.warning("No data returned for %s; skipping.", nse_symbol)
-            return None
-
-        # yfinance may return a MultiIndex column frame for single tickers.
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df = _compute_indicators(df)
+        df = _compute_indicators(result.frame)
         latest = df.iloc[-1]
 
         if not _passes_setup_filter(latest):
@@ -203,6 +182,8 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
             "atr": float(latest["atr_14"]),
             "volume": float(latest["volume"]),
             "avg_volume_20": float(latest["avg_volume_20"]),
+            "data_source": result.source,
+            "data_fetched_at": result.fetched_at.isoformat(),
         }
 
     with ThreadPoolExecutor(max_workers=settings.SCREENER_MAX_WORKERS) as pool:

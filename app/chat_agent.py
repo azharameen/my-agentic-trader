@@ -19,15 +19,14 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from typing import Optional
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.prebuilt import create_react_agent
 
-from config.settings import get_settings
-from app import executor, graph, pipeline, screener
+from app import checkpoint, executor, graph, pipeline, screener
 from app.llm import build_chat_openai
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -114,21 +113,9 @@ def run_symbol(symbol: str) -> str:
     return f"{symbol.upper()} finished: {details}"
 
 
-_checkpointer: Optional[SqliteSaver] = None
-_checkpoint_conn: Optional[sqlite3.Connection] = None
-
-
 def _get_checkpointer() -> SqliteSaver:
-    """Return a long-lived checkpointer so chat memory survives restarts."""
-    global _checkpointer, _checkpoint_conn
-    if _checkpointer is None:
-        settings = get_settings()
-        checkpoint_path = settings.CHECKPOINT_DB_PATH
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(checkpoint_path), check_same_thread=False)
-        _checkpoint_conn = conn
-        _checkpointer = SqliteSaver(conn)
-    return _checkpointer
+    """Return the shared long-lived checkpointer."""
+    return checkpoint.get_checkpointer()
 
 
 def _build_agent():

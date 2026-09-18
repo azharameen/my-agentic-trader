@@ -21,6 +21,7 @@ forwards the human's decision into the graph.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -36,8 +37,8 @@ from telegram.ext import (
     filters,
 )
 
-from config.settings import get_settings
 from app import chat_agent, executor, universe
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,6 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     import threading
 
     def _work() -> None:
-        from app import chat_agent
 
         thread_id = f"telegram-chat-{update.effective_chat.id}"
         answer = chat_agent.ask(question, thread_id=thread_id)
@@ -309,7 +309,6 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
     """
     import json
 
-    import requests
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = {

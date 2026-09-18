@@ -22,6 +22,8 @@ paper trades but must not buy or sell securities automatically.
 - Investment advice or guaranteed returns.
 - Replacing official filings with an LLM summary.
 - Adding cloud infrastructure before local evaluation proves the need.
+- Live broker GTT, OCO, buy, sell, or order-modification automation in the
+  current product phase.
 
 ## Users
 
@@ -95,6 +97,13 @@ Agents remain read-only with deterministic tool outputs.
 Optional Groww read-only synchronization, exposure-aware research, paper-trade
 analytics, attribution, and regression datasets.
 
+### Phase 5: Safe orchestration modernization
+
+CI and lifecycle hardening, reducer-safe graph state, measured parallel research
+fan-out, richer market-context inputs, specialized qualitative analyst roles,
+and realistic paper transaction-cost accounting. SQLite remains the persistence
+system; live broker execution remains excluded.
+
 ## Success Metrics
 
 - Percentage of proposals with complete source provenance.
@@ -104,9 +113,20 @@ analytics, attribution, and regression datasets.
 - False-positive and false-negative rates by strategy and catalyst class.
 - Paper-trade expectancy, drawdown, and outcome attribution.
 - Zero live orders and zero LLM-generated risk numbers.
+- Paper P&L includes delivery transaction costs and reports gross versus net
+  results.
+- Extreme India VIX and NIFTY trend conditions can deterministically block new
+  paper proposals before individual-symbol research.
 
 ## Acceptance Boundary
 
 The product is complete for the current phase when the docs are canonical, the
 source matrix is maintained, tasks are traceable, all research outputs are
 auditable, and the system remains paper-only.
+
+## Readiness Boundary
+
+Implementation must not begin for a task when its critical thresholds, source
+authority, identity rules, or persistence contract are undefined. Research-only
+source discovery may proceed, but scheduled ingestion requires a documented
+access method, terms review, fallback, freshness rule, and failure behavior.

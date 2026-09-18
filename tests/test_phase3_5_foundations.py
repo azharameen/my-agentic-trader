@@ -30,7 +30,6 @@ def test_strategy_protocol_preserves_current_filter():
 
 
 def test_unknown_strategy_fails_closed():
-    settings = get_settings()
     with pytest.raises(ValueError, match="Unknown setup strategy"):
         get_setup_strategy("not-configured")
 
@@ -103,7 +102,7 @@ def test_universe_scan_continues_if_one_symbol_fails(monkeypatch):
         lambda universe_symbols: [{"symbol": "FAILME"}, {"symbol": "OKAY"}],
     )
 
-    def fake_process_symbol(symbol: str, news_headlines=None, snapshot=None):
+    def fake_process_symbol(symbol: str, news_headlines=None, snapshot=None, events=None):
         if symbol == "FAILME":
             raise RuntimeError("boom")
         return {"__interrupt__": [SimpleNamespace(value={"symbol": symbol})]}

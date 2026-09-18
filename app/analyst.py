@@ -16,11 +16,10 @@ human approver can reject the trade.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
-from config.settings import get_settings
 from app.llm import build_chat_openai
 from app.state import CatalystAssessment
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

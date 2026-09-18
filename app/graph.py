@@ -28,16 +28,25 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from app import (
+    analyst,
+    broker,
+    checkpoint,
+    corporate_events,
+    evidence,
+    executor,
+    observability,
+    risk,
+    screener,
+)
+from app.state import ProposalCard, TradingState
 from config.settings import get_settings
-from app.state import TradingState
-from app import observability, screener, analyst, risk, executor, broker
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +77,7 @@ def _math_screener(state: TradingState) -> dict:
         "rsi": row["rsi"],
         "ema_200": row["ema_200"],
         "atr": row["atr"],
+        "source_set": [row.get("data_source", "unknown")],
     }
 
 
@@ -82,6 +92,13 @@ def _analyze_catalyst(state: TradingState) -> dict:
 def _calculate_risk(state: TradingState) -> dict:
     """Deterministic risk engine: build the TradeProposal (or reject)."""
     symbol = state["symbol"]
+    event_reason = corporate_events.blackout_reason(
+        [corporate_events.CorporateEvent.model_validate(item) for item in state.get("corporate_events", [])],
+        symbol,
+        holding_days=get_settings().CORPORATE_EVENT_BLACKOUT_DAYS,
+    )
+    if event_reason:
+        return {"human_decision": event_reason}
     proposal = risk.calculate_risk(
         symbol=symbol,
         entry_price=state["daily_close"],
@@ -102,24 +119,24 @@ def _human_approval(state: TradingState) -> dict:
     """
     proposal = state["order_proposal"]
     assessment = state.get("catalyst_assessment")
-    card = {
-        "symbol": proposal.symbol,
-        "entry_price": proposal.entry_price,
-        "soft_stop": proposal.soft_stop,
-        "hard_stop": proposal.hard_stop,
-        "target_price": proposal.target_price,
-        "quantity": proposal.quantity,
-        "risk_amount": proposal.risk_amount,
-        "risk_to_reward": proposal.risk_to_reward,
-        "thesis": assessment.thesis_rationale if assessment else "",
-        "catalyst_type": assessment.catalyst_type if assessment else "UNKNOWN",
-        "proposed_at": datetime.now(timezone.utc).isoformat(),
-    }
+    card = ProposalCard(
+        symbol=proposal.symbol,
+        entry_price=proposal.entry_price,
+        soft_stop=proposal.soft_stop,
+        hard_stop=proposal.hard_stop,
+        target_price=proposal.target_price,
+        quantity=proposal.quantity,
+        risk_amount=proposal.risk_amount,
+        risk_to_reward=proposal.risk_to_reward,
+        thesis=assessment.thesis_rationale if assessment else "",
+        catalyst_type=assessment.catalyst_type if assessment else "UNKNOWN",
+        proposed_at=datetime.now(timezone.utc),
+    )
     decision = interrupt(card)
     return {"human_decision": decision, "proposal_card": card}
 
 
-def _proposal_is_stale(card: dict, symbol: str, entry_price: float) -> bool:
+def _proposal_is_stale(card: ProposalCard | dict, symbol: str, entry_price: float) -> bool:
     """True if the proposal is old enough AND the price has drifted meaningfully.
 
     A stale-but-still-near-entry approval is allowed through (the setup is
@@ -127,11 +144,11 @@ def _proposal_is_stale(card: dict, symbol: str, entry_price: float) -> bool:
     doesn't execute at outdated levels — they should re-run the symbol.
     """
     settings = get_settings()
-    proposed_at = card.get("proposed_at")
+    proposed_at = card.get("proposed_at") if isinstance(card, dict) else card.proposed_at
     if not proposed_at:
         return False
     try:
-        proposed_dt = datetime.fromisoformat(proposed_at)
+        proposed_dt = datetime.fromisoformat(proposed_at) if isinstance(proposed_at, str) else proposed_at
     except ValueError:
         return False
 
@@ -171,6 +188,11 @@ def _paper_execute(state: TradingState) -> dict:
         thesis=assessment.thesis_rationale if assessment else "",
         human_decision="APPROVED",
         news_headlines=state.get("news_headlines") or [],
+        evidence_snapshot_id=state.get("evidence_snapshot_id"),
+        strategy_name=state.get("strategy_name"),
+        market_regime=state.get("market_regime"),
+        catalyst_type=assessment.catalyst_type if assessment else None,
+        source_set=state.get("source_set") or [],
     )
     return {"execution_details": details}
 
@@ -193,7 +215,7 @@ def _route_after_analyst(state: TradingState) -> str:
 
 
 def _route_after_risk(state: TradingState) -> str:
-    if state.get("human_decision") == "REJECTED_RISK":
+    if state.get("human_decision") == "REJECTED_RISK" or str(state.get("human_decision", "")).startswith("CORPORATE_EVENT_BLACKOUT"):
         return "rejected"
     return "human_approval"
 
@@ -207,9 +229,6 @@ def _route_after_approval(state: TradingState) -> str:
 # --------------------------------------------------------------------------- #
 # Graph construction
 # --------------------------------------------------------------------------- #
-_checkpointer: Optional[SqliteSaver] = None
-_checkpoint_conn: Optional[sqlite3.Connection] = None
-
 _THREAD_INDEX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS graph_threads (
     thread_id   TEXT PRIMARY KEY,
@@ -227,25 +246,21 @@ def _get_checkpointer() -> SqliteSaver:
     connection (and its `data/` directory) is created once and reused, which
     keeps checkpoints durable across `build_graph()` calls.
     """
-    global _checkpointer, _checkpoint_conn
-    if _checkpointer is None:
-        settings = get_settings()
-        db_path = Path(settings.CHECKPOINT_DB_PATH)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        conn.executescript(_THREAD_INDEX_SCHEMA)
-        _checkpoint_conn = conn
-        _checkpointer = SqliteSaver(conn)
-    return _checkpointer
+    saver = checkpoint.get_checkpointer()
+    connection = checkpoint.current_connection()
+    if connection is not None:
+        connection.executescript(_THREAD_INDEX_SCHEMA)
+    return saver
 
 
 def _record_thread(thread_id: str, symbol: str) -> None:
     """Track active trade threads in our own table instead of checkpoint internals."""
     _get_checkpointer()
-    if _checkpoint_conn is None:
+    connection = checkpoint.current_connection()
+    if connection is None:
         return
     try:
-        _checkpoint_conn.execute(
+        connection.execute(
             """
             INSERT INTO graph_threads (thread_id, symbol, updated_at)
             VALUES (?, ?, ?)
@@ -255,21 +270,22 @@ def _record_thread(thread_id: str, symbol: str) -> None:
             """,
             (thread_id, symbol, datetime.now(timezone.utc).isoformat()),
         )
-        _checkpoint_conn.commit()
-    except sqlite3.OperationalError as exc:
+        connection.commit()
+    except Exception as exc:  # noqa: BLE001 - checkpoint index is best effort
         logger.warning("Could not record graph thread %s: %s", thread_id, exc)
 
 
 def _backfill_thread_index() -> None:
     """Best-effort migration from checkpoint internals to the public thread index."""
     _get_checkpointer()
-    if _checkpoint_conn is None:
+    connection = checkpoint.current_connection()
+    if connection is None:
         return
     try:
-        indexed = _checkpoint_conn.execute("SELECT COUNT(*) FROM graph_threads").fetchone()
+        indexed = connection.execute("SELECT COUNT(*) FROM graph_threads").fetchone()
         if indexed and indexed[0]:
             return
-        cur = _checkpoint_conn.execute(
+        cur = connection.execute(
             "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ?",
             ("trade-%",),
         )
@@ -277,12 +293,12 @@ def _backfill_thread_index() -> None:
         if not rows:
             return
         now = datetime.now(timezone.utc).isoformat()
-        _checkpoint_conn.executemany(
+        connection.executemany(
             "INSERT OR IGNORE INTO graph_threads (thread_id, symbol, updated_at) VALUES (?, ?, ?)",
             [(thread_id, thread_id.split("-", 2)[1] if "-" in thread_id else thread_id, now) for thread_id in rows],
         )
-        _checkpoint_conn.commit()
-    except sqlite3.OperationalError:
+        connection.commit()
+    except Exception:  # noqa: BLE001 - checkpoint migration is best effort
         return
 
 
@@ -294,10 +310,11 @@ def _all_thread_ids(prefix: str = "trade-") -> list[str]:
     depending on undocumented listing semantics.
     """
     _backfill_thread_index()
-    if _checkpoint_conn is None:
+    connection = checkpoint.current_connection()
+    if connection is None:
         return []
     try:
-        cur = _checkpoint_conn.execute(
+        cur = connection.execute(
             "SELECT thread_id FROM graph_threads WHERE thread_id LIKE ? ORDER BY updated_at",
             (f"{prefix}%",),
         )
@@ -325,7 +342,8 @@ def list_pending_approvals() -> list[dict]:
         except Exception:  # noqa: BLE001 - a corrupt/partial checkpoint must not break the listing
             continue
         if snap.interrupts:
-            pending.append(dict(snap.interrupts[0].value))
+            value = snap.interrupts[0].value
+            pending.append(value.model_dump() if isinstance(value, ProposalCard) else dict(value))
     return pending
 
 
@@ -381,6 +399,7 @@ def run_symbol(
     symbol: str,
     news_headlines: Optional[list[str]] = None,
     snapshot: Optional[dict] = None,
+    events: Optional[list[corporate_events.CorporateEvent]] = None,
 ) -> dict:
     """Run the graph for a single symbol up to (and including) the interrupt.
 
@@ -406,6 +425,9 @@ def run_symbol(
     initial_state: TradingState = {
         "symbol": symbol,
         "news_headlines": news_headlines or [],
+        "strategy_name": get_settings().SETUP_STRATEGY,
+        "market_regime": "UNASSESSED",
+        "corporate_events": [event.model_dump(mode="json") for event in events or []],
     }
     if snapshot is not None:
         initial_state.update({
@@ -414,6 +436,31 @@ def run_symbol(
             "ema_200": snapshot["ema_200"],
             "atr": snapshot["atr"],
         })
+    items = []
+    if all(key in initial_state for key in ("daily_close", "rsi", "ema_200", "atr")):
+        items.append(
+            evidence.EvidenceItem(
+                kind="MARKET",
+                symbol=symbol,
+                payload={key: initial_state[key] for key in ("daily_close", "rsi", "ema_200", "atr")},
+                provenance=evidence.Provenance(source="screener", fetched_at=datetime.now(timezone.utc)),
+            )
+        )
+    items.extend(
+        evidence.EvidenceItem(
+            kind="NEWS",
+            symbol=symbol,
+            payload={"headline": headline},
+            provenance=evidence.Provenance(source="rss", fetched_at=datetime.now(timezone.utc)),
+        )
+        for headline in news_headlines or []
+    )
+    items.extend(corporate_events.to_evidence_items(events or []))
+    if items:
+        stored_snapshot = evidence.EvidenceSnapshot(symbol=symbol, items=items)
+        evidence.validate_snapshot(stored_snapshot)
+        initial_state["evidence_snapshot_id"] = evidence.save_snapshot(stored_snapshot)
+        initial_state["source_set"] = stored_snapshot.source_set
     with observability.span("graph.run_symbol", symbol=symbol):
         return graph.invoke(initial_state, config)
 

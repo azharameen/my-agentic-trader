@@ -23,8 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config.settings import get_settings
+from app.risk import calculate_delivery_costs
 from app.state import TradeProposal
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ CREATE TABLE IF NOT EXISTS trade_audit_log (
     status          TEXT NOT NULL DEFAULT 'OPEN_PAPER',
     exit_price      REAL,
     realized_pnl    REAL,
+    gross_pnl       REAL,
+    transaction_costs TEXT,
+    evidence_snapshot_id TEXT,
+    strategy_name   TEXT,
+    market_regime   TEXT,
+    catalyst_type   TEXT,
+    source_set      TEXT,
     mistake_category TEXT
 );
 """
@@ -79,10 +87,19 @@ def init_db() -> None:
     path = _db_path()
     with sqlite3.connect(path) as conn:
         conn.executescript(_SCHEMA)
-        _ensure_column(conn, "headlines_used", "TEXT")
+    _ensure_column(conn, "headlines_used", "TEXT")
+    _ensure_column(conn, "gross_pnl", "REAL")
+    _ensure_column(conn, "transaction_costs", "TEXT")
+    _ensure_column(conn, "evidence_snapshot_id", "TEXT")
+    _ensure_column(conn, "strategy_name", "TEXT")
+    _ensure_column(conn, "market_regime", "TEXT")
+    _ensure_column(conn, "catalyst_type", "TEXT")
+    _ensure_column(conn, "source_set", "TEXT")
     from app import outbox
 
     outbox.init_db()
+    from app import evidence
+    evidence.init_db()
     logger.info("Audit database ready at %s", path)
 
 
@@ -113,6 +130,11 @@ def record_open_trade(
     thesis: str,
     human_decision: str,
     news_headlines: Optional[list[str]] = None,
+    evidence_snapshot_id: Optional[str] = None,
+    strategy_name: Optional[str] = None,
+    market_regime: Optional[str] = None,
+    catalyst_type: Optional[str] = None,
+    source_set: Optional[list[str]] = None,
 ) -> dict:
     """Simulate a paper fill and persist an OPEN_PAPER trade row.
 
@@ -137,7 +159,8 @@ def record_open_trade(
                 trade_id, timestamp, symbol, entry_price, soft_stop, hard_stop,
                 target_price, quantity, rsi, ema_200, atr, thesis, headlines_used,
                 human_decision, fill_price, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN_PAPER')
+                , evidence_snapshot_id, strategy_name, market_regime, catalyst_type, source_set
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 trade_id,
@@ -155,6 +178,12 @@ def record_open_trade(
                 headlines_json,
                 human_decision,
                 fill_price,
+                "OPEN_PAPER",
+                evidence_snapshot_id,
+                strategy_name,
+                market_regime,
+                catalyst_type,
+                json.dumps(source_set or []),
             ),
         )
         conn.commit()
@@ -202,16 +231,21 @@ def close_trade(
 
         fill_price = row["fill_price"]
         quantity = row["quantity"]
-        realized_pnl = round((exit_price - fill_price) * quantity, 2)
+        gross_pnl = round((exit_price - fill_price) * quantity, 2)
+        costs = calculate_delivery_costs(
+            buy_value=fill_price * quantity,
+            sell_value=exit_price * quantity,
+        )
+        realized_pnl = round(gross_pnl - costs.total, 2)
 
         conn.execute(
             """
             UPDATE trade_audit_log
             SET status = 'CLOSED', exit_price = ?, realized_pnl = ?,
-                mistake_category = ?
+                gross_pnl = ?, transaction_costs = ?, mistake_category = ?
             WHERE trade_id = ?
             """,
-            (exit_price, realized_pnl, mistake_category, trade_id),
+            (exit_price, realized_pnl, gross_pnl, costs.model_dump_json(), mistake_category, trade_id),
         )
         conn.commit()
 
@@ -223,6 +257,8 @@ def close_trade(
         "trade_id": trade_id,
         "exit_price": exit_price,
         "realized_pnl": realized_pnl,
+        "gross_pnl": gross_pnl,
+        "transaction_costs": costs.model_dump(),
         "status": "CLOSED",
     }
 

@@ -20,15 +20,16 @@ def isolated_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("UNIVERSE_CACHE_PATH", str(tmp_path / "universe" / "nifty100.csv"))
     get_settings.cache_clear()
 
-    import app.graph as graph_module
-    graph_module._checkpointer = None
-    graph_module._checkpoint_conn = None
+    from app import checkpoint
+    checkpoint.reset()
+    from app import universe
+    universe.clear_cache()
 
     from app import executor
     executor.init_db()
 
     yield
 
-    graph_module._checkpointer = None
-    graph_module._checkpoint_conn = None
+    checkpoint.reset()
+    universe.clear_cache()
     get_settings.cache_clear()
