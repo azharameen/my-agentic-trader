@@ -66,7 +66,13 @@ trading_agent/
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-├── ARCHITECTURE.md
+├── docs/
+│   ├── architecture.md
+│   ├── prd.md
+│   ├── reference.md
+│   ├── architecture-decisions.md
+│   └── tasks.md
+├── ARCHITECTURE.md             # compatibility link to docs/architecture.md
 └── README.md
 ```
 

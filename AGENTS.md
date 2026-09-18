@@ -2,7 +2,29 @@
 
 Local-first, containerized decision-support system: deterministic technical screening → LLM catalyst filter (any OpenAI-compatible endpoint via `langchain-openai`; configured through `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`) → deterministic risk gates → human approval via Telegram → paper execution → SQLite audit.
 
-**Read first:** [README.md](README.md) (setup, CLI, config reference) and [ARCHITECTURE.md](ARCHITECTURE.md) (data flow, LangGraph HITL, risk math, persistence). Do not duplicate their content here.
+**Read first:** [README.md](README.md) (setup and CLI), then the canonical
+documentation under [`docs/`](docs/): [architecture](docs/architecture.md),
+[PRD](docs/prd.md), [references](docs/reference.md), [architecture decisions](docs/architecture-decisions.md),
+and [tasks](docs/tasks.md). The root `ARCHITECTURE.md` is only a compatibility
+link. Do not duplicate canonical documentation here.
+
+## Documentation-first development
+
+- Treat `docs/` as the source of truth for product scope, architecture, sources,
+  decisions, and task status.
+- Before coding, move the relevant task to `active` in `docs/tasks.md`.
+- Before review, move it to `inreview` and mark completed checklist items.
+- Do not mark a task `done` until tests and documentation are updated.
+- Update `docs/prd.md` when product scope or acceptance criteria changes.
+- Update `docs/architecture.md` when data flow, boundaries, persistence,
+  agents, or deployment changes.
+- Update `docs/reference.md` before adding or changing an external source, API,
+  credential, MCP, quota, or fallback.
+- Add an ADR to `docs/architecture-decisions.md` for architectural choices,
+  especially anything affecting safety, execution, data authority, or agent
+  permissions.
+- Remove completed tasks from the live task ledger after merge; retain durable
+  decisions in the ADR log.
 
 ## Commands
 
@@ -26,6 +48,10 @@ pytest -q                             # unit tests (risk, screener, universe, gr
 - **Fail-closed everywhere.** LLM errors/missing API key → conservative fallback → trade rejected. Per-symbol screener errors are caught and skipped. Keep broad `except` + `# noqa: BLE001` markers where they exist — they are intentional.
 - **Live trading is blocked.** `executor.record_open_trade` raises `RuntimeError` when `TRADING_MODE == "LIVE"`. Paper trading is the only supported mode.
 - **Audit everything.** Every decision state goes to `trade_audit_log` in `data/trading_audit.db`.
+- **No agentic execution.** Research agents may collect, analyze, report, and
+  trigger research runs, but may never approve, reject, buy, sell, or mutate
+  risk settings. Groww is read-only unless a future ADR explicitly changes
+  this invariant.
 
 ## Conventions
 
