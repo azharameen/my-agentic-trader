@@ -64,6 +64,8 @@ def _build_llm() -> ChatOpenAI:
         "model": settings.OPENAI_MODEL,
         "api_key": settings.OPENAI_API_KEY,
         "temperature": 0.0,  # deterministic classification
+        "max_retries": 3,  # transient network/5xx errors retry with backoff before failing closed
+        "timeout": 30,
     }
     if settings.OPENAI_BASE_URL:
         kwargs["base_url"] = settings.OPENAI_BASE_URL

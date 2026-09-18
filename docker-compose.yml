@@ -19,20 +19,26 @@ services:
     command: ["python", "-m", "app.main", "serve"]
     env_file:
       - .env
-    environment:
-      # Ensure the MCP filesystem server can resolve the workspace root.
-      WORKSPACE_ROOT: /app
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     # Long polling means no inbound ports are required for Telegram.
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import app.executor as e; e.init_db()"]
+      # Verifies both DB connectivity and that the bot's long-poll loop is
+      # alive (it touches data/bot_heartbeat every ~30s); a hung poll loop
+      # (not just a dead process) now fails the healthcheck.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import app.executor as e, time, pathlib, sys; e.init_db(); p = pathlib.Path('data/bot_heartbeat'); sys.exit(0 if p.exists() and (time.time() - p.stat().st_mtime) < 90 else 1)",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
     networks:
       - trading-net
 

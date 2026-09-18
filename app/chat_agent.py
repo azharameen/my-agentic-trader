@@ -78,7 +78,10 @@ def list_trades() -> str:
 def get_thread_status(symbol: str) -> str:
     """Status of the LangGraph thread for a symbol (paused proposal, decision, etc.)."""
     g = graph.build_graph()
-    config = {"configurable": {"thread_id": f"trade-{symbol.upper()}"}}
+    thread_id = graph.latest_thread_id_for(symbol.upper())
+    if thread_id is None:
+        return f"No pipeline run recorded for {symbol.upper()} yet."
+    config = {"configurable": {"thread_id": thread_id}}
     try:
         snap = g.get_state(config)
     except Exception as exc:  # noqa: BLE001
@@ -116,6 +119,8 @@ def _build_agent():
         "model": settings.OPENAI_MODEL,
         "api_key": settings.OPENAI_API_KEY,
         "temperature": 0.0,
+        "max_retries": 3,
+        "timeout": 30,
     }
     if settings.OPENAI_BASE_URL:
         kwargs["base_url"] = settings.OPENAI_BASE_URL

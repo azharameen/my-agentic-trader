@@ -12,15 +12,29 @@ order logic — it only decides which symbols *qualify* for further analysis.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Optional
 
 import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config.settings import get_settings
+from app.strategies import get_setup_strategy
 
 logger = logging.getLogger(__name__)
+
+
+@retry(
+    reraise=True,
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=6),
+    retry=retry_if_exception_type(Exception),
+)
+def _download(nse_symbol: str, period: str) -> pd.DataFrame:
+    """yfinance download with retry/backoff for transient network errors."""
+    return yf.download(nse_symbol, period=period, interval="1d", auto_adjust=True, progress=False)
 
 
 def _to_nse_symbol(symbol: str) -> str:
@@ -65,25 +79,8 @@ def _passes_setup_filter(row: pd.Series) -> bool:
     Any NaN (insufficient history) fails the filter safely.
     """
     settings = get_settings()
-    try:
-        price = row["close"]
-        ema_200 = row["ema_200"]
-        rsi = row["rsi_14"]
-        volume = row["volume"]
-        avg_volume = row["avg_volume_20"]
-    except (KeyError, TypeError):
-        return False
-
-    # Guard against NaN / None from insufficient history.
-    for value in (price, ema_200, rsi, volume, avg_volume):
-        if pd.isna(value):
-            return False
-
-    return (
-        price > ema_200
-        and rsi < settings.RSI_OVERSOLD_MAX
-        and volume > avg_volume * settings.VOLUME_RATIO_MIN
-    )
+    strategy = get_setup_strategy(settings.SETUP_STRATEGY)
+    return strategy.qualifies(row, settings)
 
 
 def get_symbol_snapshot(symbol: str) -> Optional[dict]:
@@ -99,13 +96,7 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
     settings = get_settings()
     nse_symbol = _to_nse_symbol(symbol)
     try:
-        df = yf.download(
-            nse_symbol,
-            period=settings.HISTORY_PERIOD,
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-        )
+        df = _download(nse_symbol, settings.HISTORY_PERIOD)
     except Exception as exc:  # noqa: BLE001 - network errors are expected
         logger.warning("Failed to download %s: %s", nse_symbol, exc)
         return None
@@ -148,27 +139,26 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
         `avg_volume_20`. Symbols that fail the filter or have bad data are
         skipped (and logged) rather than raising, so one bad ticker never
         aborts the whole scan.
+
+    Downloads run concurrently (I/O-bound yfinance calls) via a thread pool
+    sized by `SCREENER_MAX_WORKERS`, so a full 100-symbol scan takes roughly
+    1/N of the serial wall-clock time.
     """
     settings = get_settings()
+    symbols = list(universe)
     results: list[dict] = []
 
-    for raw_symbol in universe:
+    def _screen_one(raw_symbol: str) -> Optional[dict]:
         nse_symbol = _to_nse_symbol(raw_symbol)
         try:
-            df = yf.download(
-                nse_symbol,
-                period=settings.HISTORY_PERIOD,
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-            )
+            df = _download(nse_symbol, settings.HISTORY_PERIOD)
         except Exception as exc:  # noqa: BLE001 - network errors are expected
             logger.warning("Failed to download %s: %s", nse_symbol, exc)
-            continue
+            return None
 
         if df is None or df.empty:
             logger.warning("No data returned for %s; skipping.", nse_symbol)
-            continue
+            return None
 
         # yfinance may return a MultiIndex column frame for single tickers.
         if isinstance(df.columns, pd.MultiIndex):
@@ -177,28 +167,30 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
         df = _compute_indicators(df)
         latest = df.iloc[-1]
 
-        if _passes_setup_filter(latest):
-            results.append(
-                {
-                    "symbol": raw_symbol.strip().upper(),
-                    "daily_close": float(latest["close"]),
-                    "rsi": float(latest["rsi_14"]),
-                    "ema_200": float(latest["ema_200"]),
-                    "atr": float(latest["atr_14"]),
-                    "volume": float(latest["volume"]),
-                    "avg_volume_20": float(latest["avg_volume_20"]),
-                }
-            )
-            logger.info(
-                "SETUP QUALIFIED: %s close=%.2f rsi=%.1f ema200=%.2f atr=%.2f",
-                raw_symbol,
-                latest["close"],
-                latest["rsi_14"],
-                latest["ema_200"],
-                latest["atr_14"],
-            )
-        else:
+        if not _passes_setup_filter(latest):
             logger.debug("Symbol %s did not pass the setup filter.", raw_symbol)
+            return None
 
-    logger.info("Scan complete: %d of %d symbols qualified.", len(results), len(list(universe)))
+        logger.info(
+            "SETUP QUALIFIED: %s close=%.2f rsi=%.1f ema200=%.2f atr=%.2f",
+            raw_symbol, latest["close"], latest["rsi_14"], latest["ema_200"], latest["atr_14"],
+        )
+        return {
+            "symbol": raw_symbol.strip().upper(),
+            "daily_close": float(latest["close"]),
+            "rsi": float(latest["rsi_14"]),
+            "ema_200": float(latest["ema_200"]),
+            "atr": float(latest["atr_14"]),
+            "volume": float(latest["volume"]),
+            "avg_volume_20": float(latest["avg_volume_20"]),
+        }
+
+    with ThreadPoolExecutor(max_workers=settings.SCREENER_MAX_WORKERS) as pool:
+        futures = {pool.submit(_screen_one, symbol): symbol for symbol in symbols}
+        for future in as_completed(futures):
+            row = future.result()
+            if row is not None:
+                results.append(row)
+
+    logger.info("Scan complete: %d of %d symbols qualified.", len(results), len(symbols))
     return results

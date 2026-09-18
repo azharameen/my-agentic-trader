@@ -91,6 +91,7 @@ class TradingState(TypedDict, total=False):
       * `news_headlines`    — raw headlines gathered for the analyst.
       * `catalyst_assessment` — dict form of CatalystAssessment.
       * `order_proposal`    — dict form of TradeProposal.
+      * `proposal_card`     — the interrupt payload shown to the human (incl. `proposed_at`), used to detect stale approvals.
       * `human_decision`    — "APPROVED" | "REJECTED" | "KILLED" (from interrupt).
       * `execution_details` — fill info written by the executor node.
     """
@@ -103,5 +104,6 @@ class TradingState(TypedDict, total=False):
     news_headlines: list[str]
     catalyst_assessment: Optional[CatalystAssessment]
     order_proposal: Optional[TradeProposal]
+    proposal_card: Optional[dict]
     human_decision: Optional[str]
     execution_details: Optional[dict]

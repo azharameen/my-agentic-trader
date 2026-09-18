@@ -7,16 +7,18 @@ Local-first, containerized decision-support system: deterministic technical scre
 ## Commands
 
 ```bash
-python -m app.main scan              # one-shot: scan NIFTY 100, push proposals to Telegram
-python -m app.main run <SYMBOL>      # run a single symbol through the graph (testing)
-python -m app.main serve             # start Telegram bot (long-running)
-docker compose up --build            # single service (engine + bot)
+python -m app.main scan               # one-shot: scan NIFTY 100, push proposals to Telegram
+python -m app.main run <SYMBOL>       # run a single symbol through the graph (testing)
+python -m app.main refresh-universe   # force a live refresh of the NIFTY 100 constituent list
+python -m app.main serve              # start scheduler + Telegram bot (long-running)
+docker compose up --build             # single service (engine + bot)
+pytest -q                             # unit tests (risk, screener, universe, graph, monitor)
 ```
 
-**Telegram is the complete control plane** — no web UI/port exists. In the running bot: `/scan` (universe scan), `/run SYMBOL` (single symbol), `/trades` (audit log), Approve/Reject buttons on proposal cards, and free-text questions routed to the conversational research agent (`app/chat_agent.py`, a ReAct agent that is **read/trigger-only** — it can never approve/reject a trade). The CLI `scan`/`run` do the same via `app/pipeline.py` (shared with the bot — keep them in sync).
+**Telegram is the complete control plane** — no web UI/port exists. In the running bot: `/scan` (universe scan), `/run SYMBOL` (single symbol), `/trades` (audit log), `/pending` (proposals awaiting approval), Approve/Reject buttons on proposal cards, and free-text questions routed to the conversational research agent (`app/chat_agent.py`, a ReAct agent that is **read/trigger-only** — it can never approve/reject a trade). The CLI `scan`/`run` do the same via `app/pipeline.py` (shared with the bot — keep them in sync).
 
 - Python 3.11+, plain `pip install -r requirements.txt` (no pyproject/Makefile).
-- **There are no tests.** `app/risk.py` is a pure function and the intended unit-test target (see README "Testing" for example assertions). If you add tests, use pytest and call `get_settings.cache_clear()` after mutating env vars.
+- `pytest -q` runs the suite under `tests/`. Call `get_settings.cache_clear()` after mutating env vars in a test.
 
 ## Hard invariants — do not break
 
@@ -30,7 +32,8 @@ docker compose up --build            # single service (engine + bot)
 - Config: always `get_settings()` from `config/settings.py` (cached singleton, pydantic-settings from `.env`). Never instantiate `Settings` directly.
 - Logging: `logger = logging.getLogger(__name__)`; stdout only (no file handlers).
 - Symbols: NSE symbols **without** `.NS` suffix in state/proposals; `screener.py` appends `.NS` only for yfinance downloads.
-- LangGraph `thread_id` is `f"trade-{symbol}"` — **reused across runs**. Re-running `run RELIANCE` resumes the same checkpointed thread; a previously APPROVED symbol will not re-prompt. Use a fresh symbol or clear `data/checkpoints.db` for clean test runs.
+- LangGraph `thread_id` is `f"trade-{symbol}-{date.today().isoformat()}"` — **one fresh thread per symbol per calendar day**. Use `graph.latest_thread_id_for(symbol)` to resolve "the current thread" (e.g. for approval callbacks) rather than assuming today's date.
+- The NIFTY 100 universe is never hardcoded — always call `app.universe.get_universe()`. See its fallback chain (live fetch → cache → committed seed) below.
 - Audit timestamps are UTC ISO-8601 (`datetime.now(timezone.utc)`).
 
 ## Gotchas
@@ -42,10 +45,9 @@ docker compose up --build            # single service (engine + bot)
 - **`TELEGRAM_CHAT_ID` must be the operator's chat id, not the bot's own id.** Setting it to the bot id (the number in the bot token) makes pushes fail with `403 Forbidden: the bot can't send messages to the bot`. Get your id via @userinfobot or the bot's `getUpdates` after sending `/start`.
 - `KILLED` resume value works via fall-through to `rejected` in `_route_after_approval` (only `APPROVED` is special-cased). The Kill button was removed from the UI (redundant with Reject); `KILLED` is still accepted by `resume_symbol` for backward compatibility.
 - **The Streamlit dashboard was removed** (archived under `legacy/dashboard/`). Telegram is now the only UI. If you ever re-add a web script, it must not be named `app.py` — Streamlit puts the script's directory on `sys.path`, so `dashboard/app.py` shadows the `app/` package and `from app import executor` fails with a circular-import error.
+- **Universe CSVs live in two places on purpose.** `config/universe/nifty100_seed.csv` is committed (config/ isn't gitignored) — the trustworthy fallback baseline. `data/universe/nifty100.csv` is the gitignored, auto-refreshed runtime cache. Never hand-edit either from code; only `app/universe.py` writes the cache.
+- **Checkpointer thread-safety at scale is a known, accepted limitation**, not a bug to "fix" reflexively — the single `sqlite3` connection (`check_same_thread=False`) is fine at single-operator scale; revisit only if `/scan` concurrency issues are actually observed. `pipeline.py` already guards overlapping `/scan` calls with an in-process lock (`ScanInProgressError`).
 
-## Aspirational / vestigial — don't assume it works
+## Vestigial — don't assume it works
 
-- **The scheduler is a no-op stub.** `cmd_serve` only keeps the process alive for the Telegram bot; `apscheduler` is in requirements but never imported. The "daily EOD trigger" in the docs is not implemented (NSE close is 15:30 IST if you build it).
-- **`config/mcp_servers.json` is not read by any code.** `WORKSPACE_ROOT`, `BRAVE_API_KEY`, `GROWW_API_KEY` exist only for this unused config.
-- **`news_headlines` is always empty** — nothing fetches news, so the analyst runs on "(no headlines available)".
-- **LLM calls route through the Siemens SDC gateway** via the `GOOGLE_GEMINI_BASE_URL` *system* env var (`https://llm.sdc.siemens.cloud`), not Google directly. A `401 Key Expired` (`consumer_key_expired`) means the `GEMINI_API_KEY` consumer key lapsed on the Siemens key-management side — renew it there; it is not a code bug. After changing `.env`, restart `serve` (settings are cached at boot).
+- **LLM calls route through the Siemens SDC gateway** via the `GOOGLE_GEMINI_BASE_URL` *system* env var (`https://llm.sdc.siemens.cloud`) if still present in your shell — the app itself uses `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` from `.env`, not that system var. A `401 Key Expired` means the upstream gateway key lapsed; renew it there, not a code bug. After changing `.env`, restart `serve` (settings are cached at boot; `telegram_bot._auto_configure_chat_id` is the one exception that calls `get_settings.cache_clear()` itself).

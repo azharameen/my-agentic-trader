@@ -25,21 +25,7 @@ import threading
 from typing import Optional
 
 from config.settings import get_settings
-from app import executor, pipeline, telegram_bot
-
-# A representative NIFTY 100 universe. In production this would be loaded from
-# the official NSE NIFTY 100 constituent list; kept inline for the scaffold.
-NIFTY_100_UNIVERSE: list[str] = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL",
-    "ITC", "LT", "KOTAKBANK", "AXISBANK", "HINDUNILVR", "MARUTI", "SUNPHARMA",
-    "TITAN", "BAJFINANCE", "ASIANPAINT", "WIPRO", "ULTRACEMCO", "NTPC",
-    "POWERGRID", "TATAMOTORS", "TATASTEEL", "ADANIENT", "ADANIPORTS", "COALINDIA",
-    "HCLTECH", "TATAPOWER", "M&M", "ONGC", "NOC", "JSWSTEEL", "BAJAJFINSV",
-    "DRREDDY", "CIPLA", "DIVISLAB", "APOLLOHOSP", "BRITANNIA", "EICHERMOT",
-    "HINDALCO", "GRASIM", "HEROMOTOCO", "INDUSINDBK", "BAJAJ-AUTO", "SBILIFE",
-    "HDFCLIFE", "TORNTPHARM", "PIDILITIND", "SIEMENS", "LTIM", "TECHM",
-    "PFC", "RECLTD", "BEL", "HAL", "IRCTC", "VODAFONEIDEA", "TRENT",
-]
+from app import executor, observability, pipeline, telegram_bot, universe
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,7 +47,7 @@ def _start_telegram_in_background() -> None:
 
 def cmd_scan(_args: argparse.Namespace) -> None:
     """One-shot: scan the universe and run each qualifier through the graph."""
-    pipeline.run_universe_scan(NIFTY_100_UNIVERSE)
+    pipeline.run_universe_scan(universe.get_universe())
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -69,10 +55,65 @@ def cmd_run(args: argparse.Namespace) -> None:
     pipeline.process_symbol(args.symbol.upper())
 
 
+def cmd_refresh_universe(_args: argparse.Namespace) -> None:
+    """Force a live refresh of the NIFTY 100 universe and report the diff."""
+    old = universe.get_universe()
+    new = universe.get_universe(force_refresh=True)
+    delta = universe.diff_universe(old, new)
+    logger.info("Universe refreshed: %d symbols. Added=%s Removed=%s",
+                len(new), delta["added"], delta["removed"])
+
+
+def _scheduled_scan() -> None:
+    """apscheduler job: run the daily universe scan."""
+    try:
+        pipeline.run_universe_scan(universe.get_universe())
+    except Exception:  # noqa: BLE001 - a bad scheduled run must not kill the scheduler
+        logger.exception("Scheduled scan failed.")
+
+
+def _scheduled_universe_refresh() -> None:
+    """apscheduler job: monthly forced universe refresh, notifies Telegram of changes."""
+    try:
+        old = universe.get_universe()
+        new = universe.get_universe(force_refresh=True)
+        delta = universe.diff_universe(old, new)
+        if delta["added"] or delta["removed"]:
+            settings = get_settings()
+            text = (
+                "\U0001F504 *NIFTY 100 universe updated*\n"
+                f"Added: {', '.join(delta['added']) or 'none'}\n"
+                f"Removed: {', '.join(delta['removed']) or 'none'}"
+            )
+            telegram_bot.notify_text(settings.TELEGRAM_CHAT_ID, text)
+    except Exception:  # noqa: BLE001
+        logger.exception("Scheduled universe refresh failed.")
+
+
+def _start_scheduler() -> None:
+    """Wire the daily EOD scan and the monthly universe refresh into apscheduler."""
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    settings = get_settings()
+    scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
+    scheduler.add_job(
+        _scheduled_scan, "cron",
+        hour=settings.SCAN_CRON_HOUR, minute=settings.SCAN_CRON_MINUTE,
+        day_of_week="mon-fri", id="daily_scan",
+    )
+    scheduler.add_job(
+        _scheduled_universe_refresh, "cron",
+        day=1, hour=6, minute=0, id="monthly_universe_refresh",
+    )
+    scheduler.start()
+    logger.info("Scheduler started: daily scan at %02d:%02d IST (Mon-Fri), monthly universe refresh on day 1.",
+                settings.SCAN_CRON_HOUR, settings.SCAN_CRON_MINUTE)
+
+
 def cmd_serve(_args: argparse.Namespace) -> None:
     """Start the daily scheduler and the Telegram bot (long-running)."""
     _start_telegram_in_background()
-    logger.info("Scheduler ready. Use `scan` for a manual run; daily EOD job is a no-op stub in the scaffold.")
+    _start_scheduler()
     # Keep the process alive so the Telegram bot keeps polling.
     try:
         threading.Event().wait()
@@ -87,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p = sub.add_parser("run", help="Run a single symbol through the graph")
     run_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
     sub.add_parser("serve", help="Start scheduler + Telegram bot")
+    sub.add_parser("refresh-universe", help="Force a live refresh of the NIFTY 100 universe")
     return parser
 
 
@@ -97,6 +139,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 settings.RISK_PER_TRADE_PCT * 100)
 
     # Auto-create the audit schema on boot.
+    observability.configure()
     executor.init_db()
 
     parser = build_parser()
@@ -108,6 +151,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         cmd_run(args)
     elif args.command == "serve":
         cmd_serve(args)
+    elif args.command == "refresh-universe":
+        cmd_refresh_universe(args)
     return 0
 
 

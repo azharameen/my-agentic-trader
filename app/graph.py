@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -36,7 +37,7 @@ from langgraph.types import Command, interrupt
 
 from config.settings import get_settings
 from app.state import TradingState
-from app import screener, analyst, risk, executor
+from app import observability, screener, analyst, risk, executor
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,14 @@ logger = logging.getLogger(__name__)
 def _math_screener(state: TradingState) -> dict:
     """Entry node: pull the technical snapshot for the target symbol.
 
-    In a full daily run the universe scan happens in `main.py`; this node
-    re-derives the snapshot for the single symbol the thread is processing so
-    the state is self-contained and checkpointable.
+    If the caller already computed the snapshot (e.g. the universe scan
+    already ran `scan_nifty_universe` for this symbol), those values are
+    pre-seeded into the state and this node is a no-op — avoids downloading
+    the same OHLCV history twice per symbol on every `/scan`.
     """
+    if all(k in state for k in ("daily_close", "rsi", "ema_200", "atr")):
+        return {}
+
     symbol = state["symbol"]
     snapshot = screener.scan_nifty_universe([symbol])
     if not snapshot:
@@ -81,6 +86,7 @@ def _calculate_risk(state: TradingState) -> dict:
         symbol=symbol,
         entry_price=state["daily_close"],
         atr=state["atr"],
+        portfolio_capital=executor.get_current_capital(),
     )
     if proposal is None:
         return {"human_decision": "REJECTED_RISK"}
@@ -107,9 +113,37 @@ def _human_approval(state: TradingState) -> dict:
         "risk_to_reward": proposal.risk_to_reward,
         "thesis": assessment.thesis_rationale if assessment else "",
         "catalyst_type": assessment.catalyst_type if assessment else "UNKNOWN",
+        "proposed_at": datetime.now(timezone.utc).isoformat(),
     }
     decision = interrupt(card)
-    return {"human_decision": decision}
+    return {"human_decision": decision, "proposal_card": card}
+
+
+def _proposal_is_stale(card: dict, symbol: str, entry_price: float) -> bool:
+    """True if the proposal is old enough AND the price has drifted meaningfully.
+
+    A stale-but-still-near-entry approval is allowed through (the setup is
+    still valid); a stale AND price-moved approval is rejected so the human
+    doesn't execute at outdated levels — they should re-run the symbol.
+    """
+    settings = get_settings()
+    proposed_at = card.get("proposed_at")
+    if not proposed_at:
+        return False
+    try:
+        proposed_dt = datetime.fromisoformat(proposed_at)
+    except ValueError:
+        return False
+
+    age_minutes = (datetime.now(timezone.utc) - proposed_dt).total_seconds() / 60
+    if age_minutes < settings.STALE_PROPOSAL_MINUTES:
+        return False
+
+    snap = screener.get_symbol_snapshot(symbol)
+    if snap is None:
+        return True  # can't verify current price; be conservative
+    move_pct = abs(snap["daily_close"] - entry_price) / entry_price if entry_price else 0.0
+    return move_pct > settings.STALE_PROPOSAL_PRICE_MOVE_PCT
 
 
 def _paper_execute(state: TradingState) -> dict:
@@ -118,6 +152,15 @@ def _paper_execute(state: TradingState) -> dict:
         return {"execution_details": {"status": "NOT_EXECUTED"}}
 
     proposal = state["order_proposal"]
+    card = state.get("proposal_card") or {}
+    if _proposal_is_stale(card, proposal.symbol, proposal.entry_price):
+        logger.warning("Rejecting stale approval for %s (proposed_at=%s).",
+                       proposal.symbol, card.get("proposed_at"))
+        return {
+            "human_decision": "REJECTED_STALE",
+            "execution_details": {"status": "REJECTED_STALE", "reason": "Price moved since proposal; re-run the symbol."},
+        }
+
     assessment = state.get("catalyst_assessment")
     details = executor.record_open_trade(
         proposal=proposal,
@@ -126,6 +169,7 @@ def _paper_execute(state: TradingState) -> dict:
         atr=state["atr"],
         thesis=assessment.thesis_rationale if assessment else "",
         human_decision="APPROVED",
+        news_headlines=state.get("news_headlines") or [],
     )
     return {"execution_details": details}
 
@@ -163,6 +207,7 @@ def _route_after_approval(state: TradingState) -> str:
 # Graph construction
 # --------------------------------------------------------------------------- #
 _checkpointer: Optional[SqliteSaver] = None
+_checkpoint_conn: Optional[sqlite3.Connection] = None
 
 
 def _get_checkpointer() -> SqliteSaver:
@@ -173,14 +218,58 @@ def _get_checkpointer() -> SqliteSaver:
     connection (and its `data/` directory) is created once and reused, which
     keeps checkpoints durable across `build_graph()` calls.
     """
-    global _checkpointer
+    global _checkpointer, _checkpoint_conn
     if _checkpointer is None:
         settings = get_settings()
         db_path = Path(settings.CHECKPOINT_DB_PATH)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        _checkpoint_conn = conn
         _checkpointer = SqliteSaver(conn)
     return _checkpointer
+
+
+def _all_thread_ids(prefix: str = "trade-") -> list[str]:
+    """Distinct thread ids recorded in the checkpoint DB, matching a prefix.
+
+    Queries the checkpointer's own SQLite connection directly (rather than
+    LangGraph's generic `list()` API) so we can filter server-side and avoid
+    depending on undocumented listing semantics.
+    """
+    _get_checkpointer()
+    if _checkpoint_conn is None:
+        return []
+    try:
+        cur = _checkpoint_conn.execute(
+            "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ?",
+            (f"{prefix}%",),
+        )
+        return [row[0] for row in cur.fetchall()]
+    except sqlite3.OperationalError as exc:
+        logger.warning("Could not list checkpoint thread ids: %s", exc)
+        return []
+
+
+def latest_thread_id_for(symbol: str) -> Optional[str]:
+    """Most recent thread id for a symbol (thread ids embed an ISO date suffix)."""
+    prefix = f"trade-{symbol}-"
+    candidates = sorted(t for t in _all_thread_ids() if t.startswith(prefix))
+    return candidates[-1] if candidates else None
+
+
+def list_pending_approvals() -> list[dict]:
+    """Every proposal card currently paused at `human_approval`, across all threads."""
+    g = build_graph()
+    pending: list[dict] = []
+    for thread_id in _all_thread_ids():
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            snap = g.get_state(config)
+        except Exception:  # noqa: BLE001 - a corrupt/partial checkpoint must not break the listing
+            continue
+        if snap.interrupts:
+            pending.append(dict(snap.interrupts[0].value))
+    return pending
 
 
 def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
@@ -231,24 +320,52 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
     return graph.compile(checkpointer=checkpointer)
 
 
-def run_symbol(symbol: str, news_headlines: Optional[list[str]] = None) -> dict:
+def run_symbol(
+    symbol: str,
+    news_headlines: Optional[list[str]] = None,
+    snapshot: Optional[dict] = None,
+) -> dict:
     """Run the graph for a single symbol up to (and including) the interrupt.
+
+    A fresh `thread_id` is used per calendar day (`trade-<SYMBOL>-<ISO date>`)
+    so re-running a symbol on a later date doesn't silently resume a stale
+    checkpoint from a previous run.
+
+    Parameters
+    ----------
+    snapshot:
+        Optional pre-computed technical snapshot (`daily_close`/`rsi`/
+        `ema_200`/`atr`) from an earlier `screener.scan_nifty_universe` call,
+        so `_math_screener` can skip re-downloading the same OHLCV history.
 
     Returns the current state. If the graph paused at `human_approval`, the
     returned state will contain `__interrupt__` and the caller should resume
     with `resume_symbol(...)`.
     """
     graph = build_graph()
-    config = {"configurable": {"thread_id": f"trade-{symbol}"}}
+    thread_id = f"trade-{symbol}-{date.today().isoformat()}"
+    config = {"configurable": {"thread_id": thread_id}}
     initial_state: TradingState = {
         "symbol": symbol,
         "news_headlines": news_headlines or [],
     }
-    return graph.invoke(initial_state, config)
+    if snapshot is not None:
+        initial_state.update({
+            "daily_close": snapshot["daily_close"],
+            "rsi": snapshot["rsi"],
+            "ema_200": snapshot["ema_200"],
+            "atr": snapshot["atr"],
+        })
+    with observability.span("graph.run_symbol", symbol=symbol):
+        return graph.invoke(initial_state, config)
 
 
 def resume_symbol(symbol: str, decision: str) -> dict:
     """Resume a paused thread with a human decision.
+
+    Resolves the *most recent* thread for the symbol (see
+    `latest_thread_id_for`) rather than assuming today's date, so an approval
+    tapped after midnight still resumes the thread that actually paused.
 
     Parameters
     ----------
@@ -258,5 +375,7 @@ def resume_symbol(symbol: str, decision: str) -> dict:
         "APPROVED" or "REJECTED" (or "KILLED" for emergency stop).
     """
     graph = build_graph()
-    config = {"configurable": {"thread_id": f"trade-{symbol}"}}
-    return graph.invoke(Command(resume=decision), config)
+    thread_id = latest_thread_id_for(symbol) or f"trade-{symbol}-{date.today().isoformat()}"
+    config = {"configurable": {"thread_id": thread_id}}
+    with observability.span("graph.resume_symbol", symbol=symbol, decision=decision):
+        return graph.invoke(Command(resume=decision), config)

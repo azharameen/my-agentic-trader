@@ -15,6 +15,7 @@ requires broker execution to be mocked until proven).
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS trade_audit_log (
     ema_200         REAL,
     atr             REAL,
     thesis          TEXT,
+    headlines_used  TEXT,
     human_decision  TEXT,
     fill_price      REAL,
     status          TEXT NOT NULL DEFAULT 'OPEN_PAPER',
@@ -52,6 +54,13 @@ CREATE TABLE IF NOT EXISTS trade_audit_log (
     mistake_category TEXT
 );
 """
+
+
+def _ensure_column(conn: sqlite3.Connection, column: str, ddl_type: str) -> None:
+    """Add a column to trade_audit_log if it's missing (for pre-existing DBs)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(trade_audit_log)").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE trade_audit_log ADD COLUMN {column} {ddl_type}")
 
 
 def _db_path() -> Path:
@@ -70,7 +79,26 @@ def init_db() -> None:
     path = _db_path()
     with sqlite3.connect(path) as conn:
         conn.executescript(_SCHEMA)
+        _ensure_column(conn, "headlines_used", "TEXT")
+    from app import outbox
+
+    outbox.init_db()
     logger.info("Audit database ready at %s", path)
+
+
+def get_current_capital() -> float:
+    """Configured base capital plus realized P&L from closed paper trades.
+
+    Used for position sizing so `RISK_PER_TRADE_PCT` tracks actual equity as
+    it accrues, instead of always sizing off the static config baseline.
+    """
+    settings = get_settings()
+    with sqlite3.connect(_db_path()) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(realized_pnl), 0) FROM trade_audit_log WHERE status = 'CLOSED'"
+        ).fetchone()
+    realized = row[0] if row else 0.0
+    return settings.PORTFOLIO_CAPITAL + realized
 
 
 def _now_iso() -> str:
@@ -84,6 +112,7 @@ def record_open_trade(
     atr: float,
     thesis: str,
     human_decision: str,
+    news_headlines: Optional[list[str]] = None,
 ) -> dict:
     """Simulate a paper fill and persist an OPEN_PAPER trade row.
 
@@ -99,15 +128,16 @@ def record_open_trade(
 
     trade_id = uuid.uuid4().hex
     fill_price = round(proposal.entry_price * (1.0 + SLIPPAGE_PCT), 2)
+    headlines_json = json.dumps(news_headlines or [])
 
     with sqlite3.connect(_db_path()) as conn:
         conn.execute(
             """
             INSERT INTO trade_audit_log (
                 trade_id, timestamp, symbol, entry_price, soft_stop, hard_stop,
-                target_price, quantity, rsi, ema_200, atr, thesis,
+                target_price, quantity, rsi, ema_200, atr, thesis, headlines_used,
                 human_decision, fill_price, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN_PAPER')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN_PAPER')
             """,
             (
                 trade_id,
@@ -122,6 +152,7 @@ def record_open_trade(
                 ema_200,
                 atr,
                 thesis,
+                headlines_json,
                 human_decision,
                 fill_price,
             ),

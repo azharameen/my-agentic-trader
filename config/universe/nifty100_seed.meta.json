@@ -1,0 +1,6 @@
+{
+  "source": "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+  "fetched_at": "2026-09-18T00:00:00+00:00",
+  "count": 100,
+  "note": "Committed fallback snapshot. The runtime cache in data/universe/ is preferred and auto-refreshed; this seed is only used if the live fetch fails AND no runtime cache exists (e.g. a fresh clone with no network access)."
+}

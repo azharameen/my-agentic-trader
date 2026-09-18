@@ -21,7 +21,25 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
 # --- Human-in-the-Loop (Telegram) ------------------------------------------
-python-telegram-bot>=21.0
+python-telegram-bot[job-queue]>=21.0
 
-# --- Scheduling (optional, for the daily EOD job) ---------------------------
+# --- Scheduling (daily EOD job + monthly universe refresh) -----------------
 apscheduler>=3.10.0
+
+# --- Resilience (retry/backoff for network + LLM calls) ---------------------
+tenacity>=8.2.0
+
+# --- News ingestion (RSS headlines for the catalyst analyst) ---------------
+feedparser>=6.0.10
+
+# --- HTTP (universe CSV fetch, Telegram Bot API fallback) -------------------
+requests>=2.31.0
+
+# --- Observability ----------------------------------------------------------
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+
+# --- Testing (dev only) ------------------------------------------------------
+pytest>=8.0.0
+pytest-mock>=3.12.0
+responses>=0.25.0

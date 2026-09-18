@@ -127,6 +127,66 @@ class Settings(BaseSettings):
         default="1y",
         description="yfinance history window used for indicator computation.",
     )
+    SCREENER_MAX_WORKERS: int = Field(
+        default=8,
+        description="Thread-pool size for concurrent yfinance downloads during a universe scan.",
+    )
+    SETUP_STRATEGY: str = Field(
+        default="pullback_in_uptrend",
+        description="Named deterministic setup strategy resolved by app.strategies.",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Observability
+    # ------------------------------------------------------------------ #
+    OTEL_ENABLED: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry spans for pipeline and graph operations.",
+    )
+    OTEL_CONSOLE_EXPORTER: bool = Field(
+        default=False,
+        description="Export enabled OpenTelemetry spans to stdout for local debugging.",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Universe (NIFTY 100 constituents) — see app/universe.py
+    # ------------------------------------------------------------------ #
+    UNIVERSE_SEED_PATH: str = Field(
+        default="config/universe/nifty100_seed.csv",
+        description="Committed fallback snapshot of the NIFTY 100 constituent list.",
+    )
+    UNIVERSE_CACHE_PATH: str = Field(
+        default="data/universe/nifty100.csv",
+        description="Auto-refreshed runtime cache of the NIFTY 100 constituent list.",
+    )
+    UNIVERSE_SOURCE_URL: str = Field(
+        default="https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+        description="Official NSE Indices CSV endpoint for the live NIFTY 100 constituent list.",
+    )
+    UNIVERSE_REFRESH_DAYS: int = Field(
+        default=30,
+        description="Runtime cache is considered stale after this many days and is re-fetched live.",
+    )
+
+    # ------------------------------------------------------------------ #
+    # Human approval / scheduling
+    # ------------------------------------------------------------------ #
+    STALE_PROPOSAL_MINUTES: int = Field(
+        default=240,
+        description="A paused proposal older than this is rejected as stale on resume rather than executed at outdated levels.",
+    )
+    STALE_PROPOSAL_PRICE_MOVE_PCT: float = Field(
+        default=0.02,
+        description="Price must have moved less than this fraction from the proposed entry for a stale-but-recent approval to still execute.",
+    )
+    SCAN_CRON_HOUR: int = Field(
+        default=15,
+        description="Hour (IST, 24h) of the daily automatic universe scan.",
+    )
+    SCAN_CRON_MINUTE: int = Field(
+        default=45,
+        description="Minute of the daily automatic universe scan (post NSE close).",
+    )
 
 
 @lru_cache

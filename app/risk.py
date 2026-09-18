@@ -73,6 +73,9 @@ def calculate_risk(
     if hard_stop >= entry_price or soft_stop >= entry_price:
         logger.warning("Rejecting %s: computed stops are not below entry.", symbol)
         return None
+    if hard_stop <= 0:
+        logger.warning("Rejecting %s: computed hard stop is non-positive (ATR too large for entry).", symbol)
+        return None
 
     # --- Target & R:R ----------------------------------------------------- #
     risk_per_share = entry_price - hard_stop
