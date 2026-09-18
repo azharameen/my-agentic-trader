@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from typing import Optional
 
-from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.prebuilt import create_react_agent
 
 from config.settings import get_settings
 from app import executor, graph, pipeline, screener
+from app.llm import build_chat_openai
 
 logger = logging.getLogger(__name__)
 
@@ -112,20 +114,32 @@ def run_symbol(symbol: str) -> str:
     return f"{symbol.upper()} finished: {details}"
 
 
+_checkpointer: Optional[SqliteSaver] = None
+_checkpoint_conn: Optional[sqlite3.Connection] = None
+
+
+def _get_checkpointer() -> SqliteSaver:
+    """Return a long-lived checkpointer so chat memory survives restarts."""
+    global _checkpointer, _checkpoint_conn
+    if _checkpointer is None:
+        settings = get_settings()
+        checkpoint_path = settings.CHECKPOINT_DB_PATH
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(checkpoint_path), check_same_thread=False)
+        _checkpoint_conn = conn
+        _checkpointer = SqliteSaver(conn)
+    return _checkpointer
+
+
 def _build_agent():
     """Build the ReAct agent from the configured OpenAI-compatible endpoint."""
-    settings = get_settings()
-    kwargs: dict = {
-        "model": settings.OPENAI_MODEL,
-        "api_key": settings.OPENAI_API_KEY,
-        "temperature": 0.0,
-        "max_retries": 3,
-        "timeout": 30,
-    }
-    if settings.OPENAI_BASE_URL:
-        kwargs["base_url"] = settings.OPENAI_BASE_URL
-    llm = ChatOpenAI(**kwargs)
-    return create_react_agent(llm, [get_symbol_snapshot, list_trades, get_thread_status, run_symbol], prompt=_SYSTEM_PROMPT)
+    llm = build_chat_openai()
+    return create_react_agent(
+        llm,
+        [get_symbol_snapshot, list_trades, get_thread_status, run_symbol],
+        prompt=_SYSTEM_PROMPT,
+        checkpointer=_get_checkpointer(),
+    )
 
 
 _agent = None
@@ -139,7 +153,7 @@ def _get_agent():
     return _agent
 
 
-def ask(question: str) -> str:
+def ask(question: str, thread_id: Optional[str] = None) -> str:
     """Run a free-text question through the conversational agent.
 
     Blocking — call from a worker thread, never the bot's event loop.
@@ -151,7 +165,8 @@ def ask(question: str) -> str:
 
     try:
         agent = _get_agent()
-        result = agent.invoke({"messages": [("user", question)]})
+        config = {"configurable": {"thread_id": thread_id or "chat-agent-default"}}
+        result = agent.invoke({"messages": [("user", question)]}, config=config)
         answer = result["messages"][-1].content
         logger.info("CHAT AGENT answered (%d chars): %s", len(answer), answer[:120])
         return answer

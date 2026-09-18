@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
-from app import broker, observability, outbox
+from app import broker, executor, observability, outbox, pipeline
+from app.state import TradeProposal
 from app.strategies import PullbackInUptrendStrategy, get_setup_strategy
 from config.settings import get_settings
 
@@ -54,6 +56,62 @@ def test_outbox_retries_until_sender_succeeds():
     assert [row["event_id"] for row in outbox.pending()] == [event_id]
     assert outbox.deliver_pending(flaky_sender) == 1
     assert outbox.pending() == []
+
+
+def test_close_trade_is_idempotent():
+    proposal = TradeProposal(
+        symbol="RELIANCE",
+        entry_price=100.0,
+        soft_stop=97.0,
+        hard_stop=95.0,
+        target_price=110.0,
+        quantity=10,
+        risk_amount=1000.0,
+        risk_to_reward=2.0,
+    )
+    open_trade = executor.record_open_trade(
+        proposal=proposal,
+        rsi=30.0,
+        ema_200=90.0,
+        atr=2.0,
+        thesis="Test",
+        human_decision="APPROVED",
+        news_headlines=[],
+    )
+    first = executor.close_trade(open_trade["trade_id"], exit_price=105.0)
+    second = executor.close_trade(open_trade["trade_id"], exit_price=999.0)
+
+    assert first["status"] == "CLOSED"
+    assert second["realized_pnl"] == first["realized_pnl"]
+    rows = [row for row in executor.fetch_all_trades() if row["trade_id"] == open_trade["trade_id"]]
+    assert rows[0]["exit_price"] == 105.0
+    assert rows[0]["realized_pnl"] == first["realized_pnl"]
+
+
+def test_universe_scan_continues_if_one_symbol_fails(monkeypatch):
+    monkeypatch.setattr(pipeline.monitor, "check_open_trades", lambda: [])
+    monkeypatch.setattr(pipeline.outbox, "deliver_pending", lambda sender: 0)
+    monkeypatch.setattr(pipeline.observability, "event", lambda *args, **kwargs: None)
+
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(pipeline.observability, "span", lambda *args, **kwargs: nullcontext())
+    monkeypatch.setattr(pipeline.news, "fetch_headlines", lambda symbol: [])
+    monkeypatch.setattr(
+        pipeline.screener,
+        "scan_nifty_universe",
+        lambda universe_symbols: [{"symbol": "FAILME"}, {"symbol": "OKAY"}],
+    )
+
+    def fake_process_symbol(symbol: str, news_headlines=None, snapshot=None):
+        if symbol == "FAILME":
+            raise RuntimeError("boom")
+        return {"__interrupt__": [SimpleNamespace(value={"symbol": symbol})]}
+
+    monkeypatch.setattr(pipeline, "process_symbol", fake_process_symbol)
+
+    proposed = pipeline.run_universe_scan(["FAILME", "OKAY"])
+    assert proposed == ["OKAY"]
 
 
 def test_evaluation_fixture_is_valid_jsonl():

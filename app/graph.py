@@ -37,7 +37,7 @@ from langgraph.types import Command, interrupt
 
 from config.settings import get_settings
 from app.state import TradingState
-from app import observability, screener, analyst, risk, executor
+from app import observability, screener, analyst, risk, executor, broker
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,8 @@ def _paper_execute(state: TradingState) -> dict:
         }
 
     assessment = state.get("catalyst_assessment")
-    details = executor.record_open_trade(
+    trade_broker = broker.get_broker(get_settings().TRADING_MODE)
+    details = trade_broker.open_trade(
         proposal=proposal,
         rsi=state["rsi"],
         ema_200=state["ema_200"],
@@ -209,6 +210,14 @@ def _route_after_approval(state: TradingState) -> str:
 _checkpointer: Optional[SqliteSaver] = None
 _checkpoint_conn: Optional[sqlite3.Connection] = None
 
+_THREAD_INDEX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS graph_threads (
+    thread_id   TEXT PRIMARY KEY,
+    symbol      TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+"""
+
 
 def _get_checkpointer() -> SqliteSaver:
     """Return a process-wide `SqliteSaver` backed by a persistent connection.
@@ -224,9 +233,57 @@ def _get_checkpointer() -> SqliteSaver:
         db_path = Path(settings.CHECKPOINT_DB_PATH)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        conn.executescript(_THREAD_INDEX_SCHEMA)
         _checkpoint_conn = conn
         _checkpointer = SqliteSaver(conn)
     return _checkpointer
+
+
+def _record_thread(thread_id: str, symbol: str) -> None:
+    """Track active trade threads in our own table instead of checkpoint internals."""
+    _get_checkpointer()
+    if _checkpoint_conn is None:
+        return
+    try:
+        _checkpoint_conn.execute(
+            """
+            INSERT INTO graph_threads (thread_id, symbol, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                symbol = excluded.symbol,
+                updated_at = excluded.updated_at
+            """,
+            (thread_id, symbol, datetime.now(timezone.utc).isoformat()),
+        )
+        _checkpoint_conn.commit()
+    except sqlite3.OperationalError as exc:
+        logger.warning("Could not record graph thread %s: %s", thread_id, exc)
+
+
+def _backfill_thread_index() -> None:
+    """Best-effort migration from checkpoint internals to the public thread index."""
+    _get_checkpointer()
+    if _checkpoint_conn is None:
+        return
+    try:
+        indexed = _checkpoint_conn.execute("SELECT COUNT(*) FROM graph_threads").fetchone()
+        if indexed and indexed[0]:
+            return
+        cur = _checkpoint_conn.execute(
+            "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ?",
+            ("trade-%",),
+        )
+        rows = [row[0] for row in cur.fetchall()]
+        if not rows:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        _checkpoint_conn.executemany(
+            "INSERT OR IGNORE INTO graph_threads (thread_id, symbol, updated_at) VALUES (?, ?, ?)",
+            [(thread_id, thread_id.split("-", 2)[1] if "-" in thread_id else thread_id, now) for thread_id in rows],
+        )
+        _checkpoint_conn.commit()
+    except sqlite3.OperationalError:
+        return
 
 
 def _all_thread_ids(prefix: str = "trade-") -> list[str]:
@@ -236,12 +293,12 @@ def _all_thread_ids(prefix: str = "trade-") -> list[str]:
     LangGraph's generic `list()` API) so we can filter server-side and avoid
     depending on undocumented listing semantics.
     """
-    _get_checkpointer()
+    _backfill_thread_index()
     if _checkpoint_conn is None:
         return []
     try:
         cur = _checkpoint_conn.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ?",
+            "SELECT thread_id FROM graph_threads WHERE thread_id LIKE ? ORDER BY updated_at",
             (f"{prefix}%",),
         )
         return [row[0] for row in cur.fetchall()]
@@ -253,7 +310,7 @@ def _all_thread_ids(prefix: str = "trade-") -> list[str]:
 def latest_thread_id_for(symbol: str) -> Optional[str]:
     """Most recent thread id for a symbol (thread ids embed an ISO date suffix)."""
     prefix = f"trade-{symbol}-"
-    candidates = sorted(t for t in _all_thread_ids() if t.startswith(prefix))
+    candidates = [t for t in _all_thread_ids() if t.startswith(prefix)]
     return candidates[-1] if candidates else None
 
 
@@ -345,6 +402,7 @@ def run_symbol(
     graph = build_graph()
     thread_id = f"trade-{symbol}-{date.today().isoformat()}"
     config = {"configurable": {"thread_id": thread_id}}
+    _record_thread(thread_id, symbol)
     initial_state: TradingState = {
         "symbol": symbol,
         "news_headlines": news_headlines or [],
@@ -377,5 +435,6 @@ def resume_symbol(symbol: str, decision: str) -> dict:
     graph = build_graph()
     thread_id = latest_thread_id_for(symbol) or f"trade-{symbol}-{date.today().isoformat()}"
     config = {"configurable": {"thread_id": thread_id}}
+    _record_thread(thread_id, symbol)
     with observability.span("graph.resume_symbol", symbol=symbol, decision=decision):
         return graph.invoke(Command(resume=decision), config)

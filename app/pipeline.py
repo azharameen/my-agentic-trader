@@ -57,9 +57,13 @@ def process_symbol(
     """
     with observability.span("pipeline.process_symbol", symbol=symbol):
         logger.info("Processing %s ...", symbol)
-        if news_headlines is None:
-            news_headlines = news.fetch_headlines(symbol)
-        state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot)
+        try:
+            if news_headlines is None:
+                news_headlines = news.fetch_headlines(symbol)
+            state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot)
+        except Exception as exc:  # noqa: BLE001 - one bad symbol must not kill a scan
+            logger.exception("Failed to process %s", symbol)
+            return {"execution_details": {"status": "ERROR", "error": str(exc)}}
 
     interrupts = state.get("__interrupt__") if isinstance(state, dict) else None
     if interrupts:
@@ -67,7 +71,7 @@ def process_symbol(
         logger.info("Graph paused at human_approval for %s; pushing to Telegram.", symbol)
         recipient = get_settings().TELEGRAM_CHAT_ID
         outbox.enqueue("TRADE_PROPOSAL", recipient, payload)
-        outbox.deliver_pending(telegram_bot._send_proposal_to_chat)
+        outbox.deliver_pending(telegram_bot.send_proposal_to_chat)
         observability.event("proposal.created", symbol=symbol)
     else:
         logger.info("Thread for %s completed: %s", symbol, state.get("execution_details"))
@@ -86,7 +90,7 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
 
     try:
         with observability.span("pipeline.run_universe_scan", symbol_count=len(universe_symbols)):
-            outbox.deliver_pending(telegram_bot._send_proposal_to_chat)
+            outbox.deliver_pending(telegram_bot.send_proposal_to_chat)
             closed = monitor.check_open_trades()
             _notify_closed_trades(closed)
 
@@ -96,8 +100,12 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
 
             proposed: list[str] = []
             for row in qualifiers:
-                headlines = news.fetch_headlines(row["symbol"])
-                state = process_symbol(row["symbol"], news_headlines=headlines, snapshot=row)
+                try:
+                    headlines = news.fetch_headlines(row["symbol"])
+                    state = process_symbol(row["symbol"], news_headlines=headlines, snapshot=row)
+                except Exception:  # noqa: BLE001 - continue the rest of the universe
+                    logger.exception("Universe scan failed for %s", row["symbol"])
+                    continue
                 if isinstance(state, dict) and state.get("__interrupt__"):
                     proposed.append(row["symbol"])
             return proposed

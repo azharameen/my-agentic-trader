@@ -2,7 +2,7 @@
 Quantitative screening engine.
 
 Downloads daily OHLCV for the NIFTY 100 universe via `yfinance`, computes the
-technical indicators (EMA_200, RSI_14, ATR_14) with `pandas_ta`, and applies a
+technical indicators (EMA_200, RSI_14, ATR_14) with pandas, and applies a
 deterministic *pullback-in-an-uptrend* setup filter.
 
 This module is pure math + data fetching. It contains no LLM calls and no
@@ -16,7 +16,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Optional
 
 import pandas as pd
-import pandas_ta as ta
 import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -49,7 +48,7 @@ def _to_nse_symbol(symbol: str) -> str:
 def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Attach EMA_200, RSI_14 and ATR_14 columns to an OHLCV frame.
 
-    `pandas_ta` expects lowercase column names; yfinance already provides
+    Indicators are computed directly with pandas; yfinance already provides
     `Open/High/Low/Close/Volume` which we normalize first.
     """
     df = df.rename(
@@ -61,9 +60,30 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
             "Volume": "volume",
         }
     )
-    df["ema_200"] = ta.ema(df["close"], length=200)
-    df["rsi_14"] = ta.rsi(df["close"], length=14)
-    df["atr_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+
+    df["ema_200"] = close.ewm(span=200, adjust=False).mean()
+
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    df["rsi_14"] = 100 - (100 / (1 + rs))
+
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    df["atr_14"] = tr.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     df["avg_volume_20"] = df["volume"].rolling(window=20).mean()
     return df
 

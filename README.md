@@ -49,7 +49,7 @@ trading_agent/
 ├── app/
 │   ├── state.py            # TypedDict state + Pydantic models
 │   ├── universe.py         # NIFTY 100 constituent list: live fetch + cache + seed fallback
-│   ├── screener.py         # yfinance + pandas_ta technical screening (parallelized)
+│   ├── screener.py         # yfinance + pandas technical screening (parallelized)
 │   ├── news.py             # Free RSS headline ingestion for the catalyst analyst
 │   ├── analyst.py          # LLM catalyst node (OpenAI-compatible endpoint)
 │   ├── risk.py             # Deterministic ATR stops & 1% sizing

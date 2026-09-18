@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import logging
 
-from app import executor, screener
+from config.settings import get_settings
+from app import broker, executor, screener
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ def check_open_trades() -> list[dict]:
             category = "TARGET_HIT"
 
         if category is not None:
-            result = executor.close_trade(trade["trade_id"], exit_price=price, mistake_category=category)
+            result = broker.get_broker(get_settings().TRADING_MODE).close_trade(
+                trade["trade_id"], exit_price=price, mistake_category=category
+            )
             closed.append({**trade, **result, "mistake_category": category})
 
     if closed:

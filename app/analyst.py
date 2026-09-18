@@ -18,9 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from langchain_openai import ChatOpenAI
-
 from config.settings import get_settings
+from app.llm import build_chat_openai
 from app.state import CatalystAssessment
 
 logger = logging.getLogger(__name__)
@@ -57,19 +56,9 @@ Rules:
 """
 
 
-def _build_llm() -> ChatOpenAI:
+def _build_llm():
     """Instantiate the OpenAI-compatible chat model from settings."""
-    settings = get_settings()
-    kwargs: dict = {
-        "model": settings.OPENAI_MODEL,
-        "api_key": settings.OPENAI_API_KEY,
-        "temperature": 0.0,  # deterministic classification
-        "max_retries": 3,  # transient network/5xx errors retry with backoff before failing closed
-        "timeout": 30,
-    }
-    if settings.OPENAI_BASE_URL:
-        kwargs["base_url"] = settings.OPENAI_BASE_URL
-    return ChatOpenAI(**kwargs)
+    return build_chat_openai()
 
 
 def analyze_catalyst(symbol: str, news_headlines: list[str]) -> CatalystAssessment:

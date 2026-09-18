@@ -37,7 +37,7 @@ from telegram.ext import (
 )
 
 from config.settings import get_settings
-from app import chat_agent, executor, graph, pipeline, universe
+from app import chat_agent, executor, universe
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,12 @@ def _auto_configure_chat_id(chat_id: int) -> bool:
     immediately (no restart needed).
     """
     settings = get_settings()
+    if settings.TELEGRAM_CHAT_ID and str(chat_id) != settings.TELEGRAM_CHAT_ID:
+        logger.warning(
+            "TELEGRAM_CHAT_ID is already configured; refusing to overwrite it from chat %s.",
+            chat_id,
+        )
+        return False
     if str(chat_id) == settings.TELEGRAM_CHAT_ID:
         return False
     try:
@@ -174,6 +180,8 @@ def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
     import threading
 
     def _work() -> None:
+        from app import pipeline
+
         try:
             if symbol:
                 pipeline.process_symbol(symbol)
@@ -223,6 +231,8 @@ async def _on_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 def _format_pending() -> str:
     """Render every thread currently paused at human_approval."""
+    from app import graph
+
     pending = graph.list_pending_approvals()
     if not pending:
         return "📭 No proposals are currently awaiting approval."
@@ -242,6 +252,8 @@ async def _on_pending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button presses and resume the paused graph thread."""
+    from app import graph
+
     query = update.callback_query
     await query.answer()
 
@@ -274,7 +286,10 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     import threading
 
     def _work() -> None:
-        answer = chat_agent.ask(question)
+        from app import chat_agent
+
+        thread_id = f"telegram-chat-{update.effective_chat.id}"
+        answer = chat_agent.ask(question, thread_id=thread_id)
         if _bot_loop is not None:
             import asyncio
 
@@ -303,12 +318,12 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
         "parse_mode": "Markdown",
         "reply_markup": json.loads(markup.to_json()),
     }
-    resp = requests.post(url, json=body, timeout=15)
+    resp = _post_telegram_message(url, body)
     if resp.status_code == 400:
         # Markdown parse failure (e.g. special chars in the LLM thesis) —
         # retry as plain text so the proposal is never lost.
         body.pop("parse_mode")
-        resp = requests.post(url, json=body, timeout=15)
+        resp = _post_telegram_message(url, body)
     if resp.status_code != 200:
         logger.error("Telegram push failed: HTTP %s %s", resp.status_code, resp.text)
         return False
@@ -317,7 +332,13 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
         return True
 
 
-def _send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
+def _post_telegram_message(url: str, body: dict):
+    import requests
+
+    return requests.post(url, json=body, timeout=15)
+
+
+def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
     """Push a proposal card (with buttons) to the configured chat.
 
     Called from `main.py` when a thread pauses at `human_approval`.
@@ -378,17 +399,20 @@ def notify_text(chat_id: str, text: str) -> None:
 
         asyncio.run_coroutine_threadsafe(_push(), _bot_loop)
     else:
-        import requests
-
         url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}, timeout=15)
+        resp = _post_telegram_message(
+            url, {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        )
         if resp.status_code == 400:
-            resp = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=15)
+            resp = _post_telegram_message(url, {"chat_id": chat_id, "text": text})
         if resp.status_code != 200:
             logger.error("Telegram notification failed: HTTP %s %s", resp.status_code, resp.text)
 
 
-# Set by start_bot() so _send_proposal_to_chat can reach the live application.
+# Backwards-compatible alias for older internal callers.
+_send_proposal_to_chat = send_proposal_to_chat
+
+# Set by start_bot() so send_proposal_to_chat can reach the live application.
 _running_application: Optional[Application] = None
 # The bot's event loop, captured in start_bot() for thread-safe scheduling.
 _bot_loop: Optional["asyncio.AbstractEventLoop"] = None

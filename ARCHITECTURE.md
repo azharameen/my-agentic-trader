@@ -53,7 +53,7 @@ flowchart TD
 | `config/universe/nifty100_seed.csv` | Committed fallback NIFTY 100 snapshot (used only if the live fetch fails and no runtime cache exists). | No |
 | `app/state.py` | `CatalystAssessment`, `TradeProposal` (Pydantic) + `TradingState` (TypedDict). | No |
 | `app/universe.py` | NIFTY 100 constituent list: live fetch (official NSE Indices CSV) → runtime cache → committed seed fallback. | No |
-| `app/screener.py` | yfinance OHLCV + pandas_ta (EMA_200, RSI_14, ATR_14) + setup filter, parallelized. | No |
+| `app/screener.py` | yfinance OHLCV + pandas (EMA_200, RSI_14, ATR_14) + setup filter, parallelized. | No |
 | `app/news.py` | Free RSS headline ingestion, matched to a symbol via its NIFTY 100 company name. | No |
 | `app/analyst.py` | LLM structured-output catalyst classification (OpenAI-compatible endpoint). | **Yes** |
 | `app/risk.py` | 1% position sizing (off live capital), two-tier ATR stops, R:R gate. | No |

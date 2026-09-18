@@ -186,11 +186,19 @@ def close_trade(
     with sqlite3.connect(_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT fill_price, quantity FROM trade_audit_log WHERE trade_id = ?",
+            "SELECT status, fill_price, quantity, exit_price, realized_pnl FROM trade_audit_log WHERE trade_id = ?",
             (trade_id,),
         ).fetchone()
         if row is None:
             raise ValueError(f"Unknown trade_id: {trade_id}")
+
+        if row["status"] == "CLOSED":
+            return {
+                "trade_id": trade_id,
+                "exit_price": row["exit_price"],
+                "realized_pnl": row["realized_pnl"],
+                "status": "CLOSED",
+            }
 
         fill_price = row["fill_price"]
         quantity = row["quantity"]
