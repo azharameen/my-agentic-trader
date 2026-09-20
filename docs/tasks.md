@@ -32,8 +32,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
 | **T-027** | `done` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
 | **T-028** | `done` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
-| **T-029** | `backlog` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
-| **T-030** | `backlog` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
+| **T-029** | `done` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
+| **T-030** | `active` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
 | **T-031** | `backlog` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
 | **T-023** | `done` | High | ADR-019 | LangGraph platform modernization (native store, durability, time-travel history) |
 | **T-024** | `done` | High | ADR-020 | LangChain agent modernization (`create_agent` + PII, tool-limit, summarization middleware) |
@@ -55,56 +55,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active tasks. Next candidate from `todo`: T-029.)*
-
----
-
-## 4. Tasks Ready for Implementation (`todo`)
-
-*(Currently 0 tasks in todo. Ready to promote from backlog: T-029.)*
-
----
-
-## 5. Backlog Tasks (`backlog`)
-
----
-
-### T-029 Sequential Multi-Agent Research Subgraph with Early Exit
-- Status: `backlog`
-- Priority: `High`
-- Related ADRs: [ADR-022](architecture-decisions.md#adr-022-multi-agent-qualitative-research-architecture-sequential-bear-first-with-early-exit)
-- Goal: Replace single catalyst analyst prompt with a sequential multi-agent debate subgraph (Bear Critic $\rightarrow$ Bull Analyst $\rightarrow$ Synthesis Arbiter).
-
-#### Sub-Task 29.1: Agent Models & Personas (`app/agents/`)
-- Goal: Create specialized qualitative analysis agents with structured Pydantic outputs.
-##### Milestone 29.1.1: Structured Output Schemas (`app/agents/models.py`)
-- [ ] `BearAssessment`: red_flags, structural_risks, governance_score, confidence (0.0–1.0)
-- [ ] `BullAssessment`: momentum_thesis, volume_quality, sector_tailwinds, confidence (0.0–1.0)
-- [ ] `ResearchVerdict`: composite_confidence (0–100), verdict (BUY/PASS/WAIT), invalidation_criteria, citations
-##### Milestone 29.1.2: Agent Implementations
-- [ ] `BearRiskCritic`: Stress-tests setup for promoter pledging, litigation, debt, and overhead supply
-- [ ] `BullMomentumAnalyst`: Evaluates breakout strength, accumulation, and catalyst drivers
-- [ ] `SynthesisArbiter`: Balances arguments and produces final research thesis
-
-#### Sub-Task 29.2: Subgraph Construction & Early Exit Routing
-- Goal: Wire sequential execution with early exit into LangGraph.
-##### Milestone 29.2.1: Early Exit Logic
-- [ ] If Bear Critic scores `STRUCTURAL_DAMAGE` with `confidence >= 0.70`, terminate immediately without invoking Bull Analyst
-- [ ] If Bear Critic does not veto, invoke Bull Analyst, then Synthesis Arbiter
-- [ ] Require Synthesis Arbiter confidence $\ge 0.60$ to proceed to risk engine
-##### Milestone 29.2.2: LangGraph Integration
-- [ ] Wire multi-agent subgraph into `app.graph` replacing `_analyze_catalyst`
-- [ ] Persist full debate reasoning and citations to PostgreSQL evidence snapshot
-
-#### Acceptance Criteria
-1. Bear Critic vetoes structural damage candidates early, saving ~60% LLM cost.
-2. Only setups passing Bear Critic and scoring $\ge 0.60$ in Synthesis reach the risk engine.
-3. Hard invariant maintained: agents only classify; prices and quantities remain 100% deterministic.
-
----
-
 ### T-030 Concurrency Hardening, Thread Pools & Tenacity Retries
-- Status: `backlog`
+- Status: `active`
 - Priority: `Medium`
 - Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
 - Goal: Eliminate unbounded daemon thread spawning in Telegram bot and add resilient exponential backoff.
@@ -125,6 +77,16 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 #### Acceptance Criteria
 1. Telegram bot processes concurrent commands through a bounded pool without spawning unbounded threads.
 2. Transient network errors on RSS feeds or universe downloads retry automatically with backoff.
+
+---
+
+## 4. Tasks Ready for Implementation (`todo`)
+
+*(Currently 0 tasks in todo. Ready to promote from backlog: T-031.)*
+
+---
+
+## 5. Backlog Tasks (`backlog`)
 
 ---
 
@@ -190,6 +152,20 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-029 Sequential Multi-Agent Research Subgraph with Early Exit
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-022](architecture-decisions.md#adr-022-multi-agent-qualitative-research-architecture-sequential-bear-first-with-early-exit)
+- Completed Milestones:
+  - [x] Defined structured Pydantic agent models in `app/agents/models.py`: `BearAssessment`, `BullAssessment`, and `ResearchVerdict`
+  - [x] Implemented `BearRiskCritic` (`app/agents/bear_critic.py`) to aggressively stress-test candidates for promoter pledging, litigation, debt, and overhead supply with fail-closed fallback
+  - [x] Implemented `BullMomentumAnalyst` (`app/agents/bull_analyst.py`) evaluating setup quality, accumulation, and catalyst drivers
+  - [x] Implemented `SynthesisArbiter` (`app/agents/synthesizer.py`) synthesizing bear and bull arguments, evaluating invalidation criteria, and generating composite confidence
+  - [x] Built `research_subgraph` (`app/agents/research_subgraph.py`) coordinating sequential multi-agent debate with early exit: terminates immediately on Bear structural damage ($\ge 0.70$), saving ~60% LLM tokens
+  - [x] Enforced synthesis verdict requirements ($\ge 0.60$ composite confidence and `BUY` verdict) to pass candidate to the deterministic risk engine
+  - [x] Integrated subgraph with `app/analyst.py`, `app/state.py`, and `app/graph.py` with PostgreSQL research caching
+  - [x] Created `tests/test_agents.py` covering early exit, full debate flow, fail-closed handling, and synthesis confidence with 100% test pass rate
 
 ### T-028 Multi-Strategy Simultaneous Screening & Priority Engine
 - Status: `done`

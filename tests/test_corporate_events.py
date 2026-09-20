@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app import corporate_events, graph
+from app import analyst, corporate_events, graph
 
 
 def _event(event_type: corporate_events.CorporateEventType, event_date: date):
@@ -75,6 +75,16 @@ def test_dividend_inside_window_is_evidence_but_not_hard_blackout():
 
 
 def test_graph_rejects_earnings_blackout(monkeypatch):
+    monkeypatch.setattr(
+        analyst,
+        "analyze_catalyst",
+        lambda *args, **kwargs: analyst.CatalystAssessment(
+            is_temporary_pullback=True,
+            confidence_score=0.8,
+            thesis_rationale="Solid pullback setup",
+            catalyst_type="EARNINGS_NOISE",
+        ),
+    )
     event = _event(corporate_events.CorporateEventType.EARNINGS, date.today())
 
     result = graph.run_symbol(

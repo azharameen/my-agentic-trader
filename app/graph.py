@@ -86,7 +86,7 @@ def _math_screener(state: TradingState) -> dict:
 
 
 def _analyze_catalyst(state: TradingState) -> dict:
-    """LLM qualitative filter: classify the nature of the price drop."""
+    """LLM qualitative filter: sequential multi-agent research debate (ADR-022)."""
     symbol = state["symbol"]
     headlines = state.get("news_headlines", [])
     assessment = analyst.analyze_catalyst(symbol, headlines)
