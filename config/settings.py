@@ -165,6 +165,30 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
+    # Macro Market Regime Gates (ADR-011)
+    # ------------------------------------------------------------------ #
+    VIX_ELEVATED_THRESHOLD: float = Field(
+        default=19.0,
+        description="India VIX above this triggers 50% risk budget reduction (19.0 - 24.0).",
+    )
+    VIX_CRISIS_THRESHOLD: float = Field(
+        default=24.0,
+        description="India VIX above this completely vetoes new proposals (> 24.0).",
+    )
+    REGIME_CACHE_TTL_MINUTES: int = Field(
+        default=60,
+        description="TTL for cached macro indicators (NIFTY 50 EMA, India VIX).",
+    )
+    NIFTY_INDEX_SYMBOL: str = Field(
+        default="^NSEI",
+        description="yfinance ticker symbol for NIFTY 50 index.",
+    )
+    INDIA_VIX_SYMBOL: str = Field(
+        default="^INDIAVIX",
+        description="yfinance ticker symbol for India VIX volatility index.",
+    )
+
+    # ------------------------------------------------------------------ #
     # Observability
     # ------------------------------------------------------------------ #
     OTEL_ENABLED: bool = Field(

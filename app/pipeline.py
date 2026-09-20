@@ -57,6 +57,7 @@ def process_symbol(
     news_headlines: Optional[list[str]] = None,
     snapshot: Optional[dict] = None,
     events: Optional[list[corporate_events.CorporateEvent]] = None,
+    regime_assessment: Optional[regime.RegimeAssessment] = None,
 ) -> dict:
     """Run one symbol through the graph and push any proposal to Telegram.
 
@@ -74,7 +75,13 @@ def process_symbol(
         try:
             if news_headlines is None:
                 news_headlines = news.fetch_headlines(symbol)
-            state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot, events=events)
+            state = graph.run_symbol(
+                symbol,
+                news_headlines,
+                snapshot=snapshot,
+                events=events,
+                regime_assessment=regime_assessment,
+            )
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not kill a scan
             logger.exception("Failed to process %s", symbol)
             return {
@@ -120,9 +127,33 @@ def run_universe_scan(
             closed = monitor.check_open_trades()
             _notify_closed_trades(closed)
 
-            if regime_assessment is not None and not regime_assessment.allow_new_entries:
-                logger.warning("Scan blocked by market regime: %s", regime_assessment.reasons)
+            if regime_assessment is None:
+                regime_assessment = regime.get_regime_assessment()
+
+            if not regime_assessment.allow_new_entries:
+                reasons_str = ", ".join(regime_assessment.reasons)
+                logger.warning(
+                    "Universe scan halted by market regime gates: %s (VIX=%s, NIFTY=%s, EMA50=%s)",
+                    reasons_str,
+                    regime_assessment.vix,
+                    regime_assessment.nifty_close,
+                    regime_assessment.nifty_ema_50,
+                )
+                telegram_bot.notify_text(
+                    get_settings().TELEGRAM_CHAT_ID,
+                    f"🛑 *Universe scan halted by Macro Regime Gates:*\n"
+                    f"• Reasons: `{reasons_str}`\n"
+                    f"• India VIX: `{regime_assessment.vix}`\n"
+                    f"• NIFTY 50: `{regime_assessment.nifty_close}` (50 EMA: `{regime_assessment.nifty_ema_50}`)",
+                )
                 return []
+
+            if regime_assessment.risk_multiplier < 1.0:
+                logger.info(
+                    "Elevated market regime detected (%s). Risk budget scaled to %.0f%%.",
+                    regime_assessment.reasons,
+                    regime_assessment.risk_multiplier * 100,
+                )
 
             logger.info("Scanning universe (%d symbols)...", len(universe_symbols))
             events = corporate_events.fetch_events()
@@ -139,6 +170,7 @@ def run_universe_scan(
                         news_headlines=headlines,
                         snapshot=row,
                         events=events,
+                        regime_assessment=regime_assessment,
                     )
                 except Exception:  # noqa: BLE001 - continue the rest of the universe
                     logger.exception("Universe scan failed for %s", row["symbol"])

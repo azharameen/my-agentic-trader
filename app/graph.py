@@ -42,6 +42,7 @@ from app import (
     evidence,
     executor,
     observability,
+    regime,
     risk,
     screener,
     store,
@@ -104,11 +105,13 @@ def _calculate_risk(state: TradingState) -> dict:
     )
     if event_reason:
         return {"human_decision": event_reason}
+    risk_multiplier = float(state.get("risk_multiplier") if state.get("risk_multiplier") is not None else 1.0)
     proposal = risk.calculate_risk(
         symbol=symbol,
         entry_price=state["daily_close"],
         atr=state["atr"],
         portfolio_capital=executor.get_current_capital(),
+        risk_multiplier=risk_multiplier,
     )
     if proposal is None:
         return {"human_decision": "REJECTED_RISK", "rejection_reason": "POSITION_SIZE_OR_RISK"}
@@ -411,6 +414,7 @@ def run_symbol(
     news_headlines: Optional[list[str]] = None,
     snapshot: Optional[dict] = None,
     events: Optional[list[corporate_events.CorporateEvent]] = None,
+    regime_assessment: Optional[regime.RegimeAssessment] = None,
 ) -> dict:
     """Run the graph for a single symbol up to (and including) the interrupt.
 
@@ -433,11 +437,18 @@ def run_symbol(
     thread_id = f"trade-{symbol}-{date.today().isoformat()}"
     config = {"configurable": {"thread_id": thread_id}}
     _record_thread(thread_id, symbol)
+    regime_name = "UNASSESSED"
+    risk_mult = 1.0
+    if regime_assessment is not None:
+        regime_name = "ELEVATED_VIX" if regime_assessment.risk_multiplier < 1.0 else "NORMAL"
+        risk_mult = regime_assessment.risk_multiplier
+
     initial_state: TradingState = {
         "symbol": symbol,
         "news_headlines": news_headlines or [],
         "strategy_name": get_settings().SETUP_STRATEGY,
-        "market_regime": "UNASSESSED",
+        "market_regime": regime_name,
+        "risk_multiplier": risk_mult,
         "corporate_events": [event.model_dump(mode="json") for event in events or []],
     }
     if snapshot is not None:

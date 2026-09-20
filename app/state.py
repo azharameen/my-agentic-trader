@@ -134,6 +134,7 @@ class TradingState(TypedDict, total=False):
     cache_hits: list[str]
     strategy_name: Optional[str]
     market_regime: Optional[str]
+    risk_multiplier: Optional[float]
     corporate_events: list[dict]
     analyst_verdicts: Annotated[list[dict], operator.add]
     approved_orders: Annotated[list[dict], operator.add]

@@ -59,3 +59,20 @@ def set_value(namespace: str, cache_key: str, value: Any, ttl_minutes: int) -> N
         (namespace, cache_key, json.dumps(value, default=str), created.isoformat(), expires.isoformat()),
     )
 
+
+def get_or_set(
+    namespace: str,
+    cache_key: str,
+    fetcher: Any,
+    ttl_minutes: int,
+    force_refresh: bool = False,
+) -> Any:
+    """Fetch value from cache, or invoke fetcher and cache the result."""
+    if not force_refresh:
+        cached = get_value(namespace, cache_key)
+        if cached is not None:
+            return cached
+    fresh = fetcher()
+    set_value(namespace, cache_key, fresh, ttl_minutes)
+    return fresh
+

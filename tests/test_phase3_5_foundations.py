@@ -95,14 +95,18 @@ def test_universe_scan_continues_if_one_symbol_fails(monkeypatch):
     from contextlib import nullcontext
 
     monkeypatch.setattr(pipeline.observability, "span", lambda *args, **kwargs: nullcontext())
-    monkeypatch.setattr(pipeline.news, "fetch_headlines", lambda symbol: [])
+    monkeypatch.setattr(
+        pipeline.regime,
+        "get_regime_assessment",
+        lambda: regime.RegimeAssessment(allow_new_entries=True, risk_multiplier=1.0),
+    )
     monkeypatch.setattr(
         pipeline.screener,
         "scan_nifty_universe",
         lambda universe_symbols: [{"symbol": "FAILME"}, {"symbol": "OKAY"}],
     )
 
-    def fake_process_symbol(symbol: str, news_headlines=None, snapshot=None, events=None):
+    def fake_process_symbol(symbol: str, news_headlines=None, snapshot=None, events=None, **kwargs):
         if symbol == "FAILME":
             raise RuntimeError("boom")
         return {"__interrupt__": [SimpleNamespace(value={"symbol": symbol})]}

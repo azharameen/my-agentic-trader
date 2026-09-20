@@ -27,8 +27,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
+| **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
-| **T-004** | `todo` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
 | **T-007** | `todo` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-027** | `backlog` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
 | **T-028** | `backlog` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
@@ -60,46 +60,6 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
-
-
-### T-004 Market Context & Macro Gates
-- Status: `todo`
-- Priority: `High`
-- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions)
-- Goal: Ingest automated macro market indicators (`^NSEI` and `^INDIAVIX`) and enforce deterministic entry gates.
-- Context & Rationale: Trading pullbacks during severe market panics or broad market downtrends results in high failure rates. Macro gates filter out unfavorable conditions before per-symbol analysis.
-
-#### Sub-Task 4.1: Automated Macro Data Ingestion
-- Goal: Ingest and validate daily OHLCV for NIFTY 50 and India VIX without unstable scraping.
-##### Milestone 4.1.1: Ingestion Pipeline (`app/regime.py`)
-- [ ] Ingest daily OHLCV for `^NSEI` and `^INDIAVIX` via `yfinance`
-- [ ] Calculate NIFTY 50-day EMA
-- [ ] Cache macro indicators with configurable TTL
-- [ ] Fall back gracefully to `allow_new_entries = False` if macro data is unavailable (fail-closed)
-
-#### Sub-Task 4.2: Deterministic Policy Gates
-- Goal: Enforce accepted ADR-011 numeric thresholds.
-##### Milestone 4.2.1: Gate Evaluation Logic
-- [ ] Enforce VIX > 24.0 veto: `allow_new_entries = False`, `risk_multiplier = 0.0`, `reasons = ["INDIA_VIX_CRISIS"]`
-- [ ] Enforce VIX in [19.0, 24.0]: `allow_new_entries = True`, `risk_multiplier = 0.5`, `reasons = ["INDIA_VIX_ELEVATED"]`
-- [ ] Enforce NIFTY close < 50-day EMA veto: `allow_new_entries = False`, `reasons = ["NIFTY_BELOW_EMA_50"]`
-##### Milestone 4.2.2: Graph Pipeline Integration
-- [ ] Wire regime assessment check into `app.pipeline.run_universe_scan`
-- [ ] Terminate scan early if macro veto is triggered, notifying operator via Telegram
-
-#### Sub-Task 4.3: Testing, Verification & Governance
-- Goal: Verify macro gate enforcement across all market scenarios.
-##### Milestone 4.3.1: Unit & Integration Testing
-- [ ] Unit tests for elevated VIX, blocking VIX, and NIFTY downtrend
-- [ ] Mocked integration test verifying scheduled scan halts when India VIX = 26.5
-- [ ] Verify Gate 3 criteria: 100% test pass, clean ruff/mypy
-
-#### Acceptance Criteria
-1. Universe scans automatically evaluate India VIX and NIFTY 50 EMA before evaluating symbols.
-2. VIX > 24.0 or NIFTY < 50 EMA deterministically halts new proposals.
-3. VIX between 19.0 and 24.0 automatically applies a 0.5 risk multiplier to all generated proposals.
-
----
 
 ### T-007 Evaluation and Benchmark Reporting
 - Status: `todo`
@@ -327,6 +287,19 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-004 Market Context & Macro Gates
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions)
+- Completed Milestones:
+  - [x] Ingested daily OHLCV for `^NSEI` and `^INDIAVIX` via `yfinance` with MultiIndex handling
+  - [x] Calculated NIFTY 50-day EMA dynamically with pandas
+  - [x] Implemented TTL-governed macro caching (`REGIME_CACHE_TTL_MINUTES`) with fail-closed fallback (`MACRO_DATA_UNAVAILABLE`)
+  - [x] Enforced ADR-011 deterministic threshold gates: Crisis VIX (> 24.0) veto, Elevated VIX (19.0 - 24.0) 50% risk scaling, NIFTY < 50-EMA downtrend veto
+  - [x] Integrated regime evaluation into `run_universe_scan` with early termination and Telegram operator notification
+  - [x] Passed `risk_multiplier` into `app.risk.calculate_risk` and recorded `market_regime` in graph state
+  - [x] Created `tests/test_regime.py` covering all positive, negative, threshold, and fallback scenarios with 100% test pass rate
 
 ### T-026 PostgreSQL Infrastructure & Storage Migration
 - Status: `done`

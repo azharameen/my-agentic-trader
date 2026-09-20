@@ -14,7 +14,7 @@ def test_regime_blocks_new_entries_when_vix_is_extreme():
 
     assert result.allow_new_entries is False
     assert result.risk_multiplier == 0.0
-    assert "INDIA_VIX" in result.reasons
+    assert "INDIA_VIX_CRISIS" in result.reasons
 
 
 def test_regime_halves_risk_when_vix_is_elevated():
