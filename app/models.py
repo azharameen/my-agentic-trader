@@ -42,7 +42,17 @@ class TechnicalSnapshot(DictCompatibleModel):
     atr: float = Field(description="14-period Average True Range.")
     volume: float = Field(description="Latest session volume.")
     avg_volume_20: float = Field(description="20-session rolling average volume.")
+    ema_50: Optional[float] = Field(default=None, description="50-period Exponential Moving Average.")
+    high_20: Optional[float] = Field(default=None, description="20-period highest high.")
+    bb_lower: Optional[float] = Field(default=None, description="Bollinger lower band (20, 2.0).")
+    bb_middle: Optional[float] = Field(default=None, description="Bollinger middle band (20-SMA).")
+    bb_upper: Optional[float] = Field(default=None, description="Bollinger upper band (20, 2.0).")
     qualifies: bool = Field(default=False, description="Whether setup criteria passed.")
+    strategy_name: Optional[str] = Field(default=None, description="Primary resolved strategy.")
+    secondary_strategies: list[str] = Field(
+        default_factory=list,
+        description="Secondary qualifying strategy names.",
+    )
     data_source: str = Field(default="yfinance", description="Origin data provider.")
     data_fetched_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),

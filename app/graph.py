@@ -80,6 +80,7 @@ def _math_screener(state: TradingState) -> dict:
         "rsi": row["rsi"],
         "ema_200": row["ema_200"],
         "atr": row["atr"],
+        "strategy_name": row.get("strategy_name") or get_settings().SETUP_STRATEGY,
         "source_set": [row.get("data_source", "unknown")],
     }
 
@@ -112,6 +113,7 @@ def _calculate_risk(state: TradingState) -> dict:
         atr=state["atr"],
         portfolio_capital=executor.get_current_capital(),
         risk_multiplier=risk_multiplier,
+        strategy_name=state.get("strategy_name"),
     )
     if proposal is None:
         return {"human_decision": "REJECTED_RISK", "rejection_reason": "POSITION_SIZE_OR_RISK"}
@@ -442,11 +444,15 @@ def run_symbol(
     if regime_assessment is not None:
         regime_name = "ELEVATED_VIX" if regime_assessment.risk_multiplier < 1.0 else "NORMAL"
         risk_mult = regime_assessment.risk_multiplier
-
+    strategy = (
+        snapshot.get("strategy_name")
+        if snapshot and snapshot.get("strategy_name")
+        else get_settings().SETUP_STRATEGY
+    )
     initial_state: TradingState = {
         "symbol": symbol,
         "news_headlines": news_headlines or [],
-        "strategy_name": get_settings().SETUP_STRATEGY,
+        "strategy_name": strategy,
         "market_regime": regime_name,
         "risk_multiplier": risk_mult,
         "corporate_events": [event.model_dump(mode="json") for event in events or []],

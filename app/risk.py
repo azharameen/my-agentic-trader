@@ -1,19 +1,15 @@
-"""
-Deterministic risk engine.
+"""Deterministic risk engine (ADR-003, ADR-024).
 
-This module is *pure Python math with zero LLM calls*. It converts a qualifying
+This module is pure Python math with zero LLM calls. It converts a qualifying
 technical snapshot into a concrete `TradeProposal` (or rejects the setup) using
-the mission's hardcoded risk invariants:
+the mission's hardcoded risk invariants and strategy-specific risk profiles:
 
 * Portfolio risk cap: 1.0% of total equity per trade.
-* Position sizing:  Quantity = floor((Capital * 0.01) / (Entry - HardStop))
-* Two-tier ATR stops:
-    - Soft alert        = Entry - (1.5 * ATR_14)   (inspection only)
-    - Hard disaster stop = Entry - (2.5 * ATR_14)  (absolute invalidation)
-* R:R floor: minimum 1:2.0, i.e. Target >= Entry + 2*(Entry - HardStop).
-
-The function is a pure function of its inputs so it is trivially unit-testable
-and auditable.
+* Position sizing: Quantity = floor((Capital * 0.01 * risk_mult) / (Entry - HardStop))
+* Strategy-specific ATR stops and minimum R:R floor:
+    - Breakout Momentum: 1.0 ATR soft / 2.0 ATR hard / 3.0 R:R
+    - Pullback in Uptrend: 1.5 ATR soft / 2.5 ATR hard / 2.0 R:R
+    - Bollinger Mean Reversion: 1.2 ATR soft / 2.0 ATR hard / 2.0 R:R
 """
 
 from __future__ import annotations
@@ -25,6 +21,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.state import TradeProposal
+from app.strategies import get_strategy_risk_profile
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -76,6 +73,7 @@ def calculate_risk(
     atr: float,
     portfolio_capital: Optional[float] = None,
     risk_multiplier: float = 1.0,
+    strategy_name: Optional[str] = None,
 ) -> Optional[TradeProposal]:
     """Build a `TradeProposal` from a technical snapshot, or return `None`.
 
@@ -89,15 +87,16 @@ def calculate_risk(
         14-day Average True Range.
     portfolio_capital:
         Total equity in INR. Defaults to the configured `PORTFOLIO_CAPITAL`.
+    risk_multiplier:
+        Macro regime risk scaling factor (0.0 to 1.0).
+    strategy_name:
+        Optional name of the active setup strategy to apply custom ATR stop
+        multipliers and minimum R:R expectations.
 
     Returns
     -------
     Optional[TradeProposal]
-        A fully-specified proposal, or `None` if the setup is rejected. A setup
-        is rejected when:
-          * inputs are non-positive or ATR is missing,
-          * the computed R:R is below the configured minimum (2.0), or
-          * the position size rounds to zero shares.
+        A fully-specified proposal, or `None` if the setup is rejected.
     """
     settings = get_settings()
     capital = portfolio_capital if portfolio_capital is not None else settings.PORTFOLIO_CAPITAL
@@ -106,32 +105,40 @@ def calculate_risk(
 
     # --- Input sanity ----------------------------------------------------- #
     if entry_price <= 0 or atr <= 0 or capital <= 0:
-        logger.warning("Rejecting %s: invalid inputs (entry=%s, atr=%s, capital=%s).",
-                       symbol, entry_price, atr, capital)
+        logger.warning(
+            "Rejecting %s: invalid inputs (entry=%s, atr=%s, capital=%s).",
+            symbol, entry_price, atr, capital,
+        )
         return None
 
+    # --- Strategy Risk Profile -------------------------------------------- #
+    risk_profile = get_strategy_risk_profile(strategy_name)
+
     # --- Two-tier ATR stops ---------------------------------------------- #
-    soft_stop = entry_price - settings.ATR_SOFT_MULT * atr
-    hard_stop = entry_price - settings.ATR_HARD_MULT * atr
+    soft_stop = entry_price - risk_profile.atr_soft_mult * atr
+    hard_stop = entry_price - risk_profile.atr_hard_mult * atr
 
     # A stop must sit below entry; otherwise the ATR is degenerate.
     if hard_stop >= entry_price or soft_stop >= entry_price:
         logger.warning("Rejecting %s: computed stops are not below entry.", symbol)
         return None
     if hard_stop <= 0:
-        logger.warning("Rejecting %s: computed hard stop is non-positive (ATR too large for entry).", symbol)
+        logger.warning(
+            "Rejecting %s: computed hard stop is non-positive (ATR too large for entry).",
+            symbol,
+        )
         return None
 
     # --- Target & R:R ----------------------------------------------------- #
     risk_per_share = entry_price - hard_stop
-    target_price = entry_price + settings.MIN_RISK_TO_REWARD * risk_per_share
+    target_price = entry_price + risk_profile.min_risk_to_reward * risk_per_share
     reward_per_share = target_price - entry_price
     risk_to_reward = reward_per_share / risk_per_share if risk_per_share > 0 else 0.0
 
-    if risk_to_reward < settings.MIN_RISK_TO_REWARD:
+    if risk_to_reward < risk_profile.min_risk_to_reward:
         logger.warning(
             "Rejecting %s: R:R %.2f below minimum %.2f.",
-            symbol, risk_to_reward, settings.MIN_RISK_TO_REWARD,
+            symbol, risk_to_reward, risk_profile.min_risk_to_reward,
         )
         return None
 
@@ -157,8 +164,9 @@ def calculate_risk(
         risk_to_reward=round(risk_to_reward, 2),
     )
     logger.info(
-        "PROPOSAL %s: entry=%.2f soft=%.2f hard=%.2f target=%.2f qty=%d rr=%.2f",
-        symbol, proposal.entry_price, proposal.soft_stop, proposal.hard_stop,
-        proposal.target_price, proposal.quantity, proposal.risk_to_reward,
+        "PROPOSAL %s [%s]: entry=%.2f soft=%.2f hard=%.2f target=%.2f qty=%d rr=%.2f",
+        symbol, risk_profile.name, proposal.entry_price, proposal.soft_stop,
+        proposal.hard_stop, proposal.target_price, proposal.quantity,
+        proposal.risk_to_reward,
     )
     return proposal

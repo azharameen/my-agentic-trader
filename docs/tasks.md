@@ -31,7 +31,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | **T-007** | `done` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
 | **T-027** | `done` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
-| **T-028** | `backlog` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
+| **T-028** | `done` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
 | **T-029** | `backlog` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
 | **T-030** | `backlog` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
 | **T-031** | `backlog` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
@@ -55,49 +55,17 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active tasks. Next candidates from `todo`: T-028, T-029.)*
+*(Currently 0 active tasks. Next candidate from `todo`: T-029.)*
 
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
 
-*(Currently 0 tasks in todo. Ready to promote from backlog: T-028, T-029.)*
+*(Currently 0 tasks in todo. Ready to promote from backlog: T-029.)*
 
 ---
 
 ## 5. Backlog Tasks (`backlog`)
-
----
-
-### T-028 Multi-Strategy Simultaneous Screening & Priority Engine
-- Status: `backlog`
-- Priority: `High`
-- Related ADRs: [ADR-024](architecture-decisions.md#adr-024-multi-strategy-simultaneous-screening-with-deterministic-priority)
-- Goal: Implement simultaneous evaluation of Breakout, Pullback, and Mean Reversion setups with deterministic priority.
-
-#### Sub-Task 28.1: Strategy Implementations (`app/strategies.py`)
-- Goal: Build pluggable setup strategies implementing the `SetupStrategy` Protocol.
-##### Milestone 28.1.1: Concrete Strategy Classes
-- [ ] `PullbackInUptrendStrategy`: Price > EMA 200, RSI 14 < 42, Volume > 0.5 * 20-day avg
-- [ ] `BreakoutMomentumStrategy`: Price > 20-day High, Price > EMA 50, Volume > 1.5 * 20-day avg
-- [ ] `BollingerMeanReversionStrategy`: Price <= Lower Band (20, 2.0), RSI 14 < 30, Price > EMA 200
-##### Milestone 28.1.2: Screener Indicator Extensions
-- [ ] Extend `screener._compute_indicators` to calculate Bollinger Bands and Donchian channels in pandas
-
-#### Sub-Task 28.2: Priority Resolution & Strategy-Specific Risk
-- Goal: Prevent duplicate proposals for the same symbol and apply strategy-appropriate stops.
-##### Milestone 28.2.1: Priority Resolver
-- [ ] Implement deterministic priority hierarchy: `BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`
-- [ ] Tag secondary qualifying setups in proposal audit logs
-##### Milestone 28.2.2: Strategy Risk Profiles (`app/risk.py`)
-- [ ] Configure Breakout risk profile: 1.0 ATR soft / 2.0 ATR hard / 3.0 R:R
-- [ ] Configure Pullback risk profile: 1.5 ATR soft / 2.5 ATR hard / 2.0 R:R
-- [ ] Configure Mean Reversion risk profile: 1.2 ATR soft / 2.0 ATR hard / Target at Middle Bollinger Band
-
-#### Acceptance Criteria
-1. Screener evaluates universe against all three strategies simultaneously.
-2. If a ticker triggers multiple setups, exactly one proposal is generated based on priority.
-3. Risk engine applies strategy-specific ATR stop multipliers and target ratios.
 
 ---
 
@@ -222,6 +190,18 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-028 Multi-Strategy Simultaneous Screening & Priority Engine
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-024](architecture-decisions.md#adr-024-multi-strategy-simultaneous-screening-with-deterministic-priority)
+- Completed Milestones:
+  - [x] Implemented concrete strategy classes in `app/strategies.py`: `BreakoutMomentumStrategy`, `PullbackInUptrendStrategy`, and `BollingerMeanReversionStrategy`
+  - [x] Extended `screener._compute_indicators` in pandas to calculate EMA 50, 20-day High (shifted), and Bollinger Bands (20, 2.0)
+  - [x] Built deterministic priority resolver `evaluate_all_strategies` enforcing `BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`
+  - [x] Integrated strategy-specific risk profiles in `app/risk.py` (Breakout: 1.0/2.0 ATR & 3.0 R:R; Pullback: 1.5/2.5 ATR & 2.0 R:R; Mean Reversion: 1.2/2.0 ATR & 2.0 R:R)
+  - [x] Refactored `TechnicalSnapshot` and `app/graph.py` to propagate `strategy_name` and tag secondary matching strategies
+  - [x] Created `tests/test_strategies.py` verifying all strategies, indicator calculations, priority resolution, and risk engine rules with 100% test pass rate
 
 ### T-027 Type Safety, Typed Models & SecretStr Hardening
 - Status: `done`
