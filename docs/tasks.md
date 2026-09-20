@@ -28,8 +28,9 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
-| **T-034** | `todo` | High | ADR-026 | Telegram Usability Suite: `[🔬 Agent Debate]` button, `/positions` command, Daily Scan Digest |
+| **T-034** | `done` | High | ADR-026 | Telegram Usability Suite: `[🔬 Agent Debate]` button, `/positions` command, Daily Scan Digest |
 | **T-035** | `todo` | High | ADR-026 | Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb errors |
+
 | **T-036** | `backlog` | Medium | ADR-025 | Phase 7: Optional React Visual Analytics Web Dashboard (FastAPI + React + Lightweight Charts) |
 | **T-033** | `done` | High | ADR-001 | Canonical documentation synchronicity, baseline consolidation, and ADR updates |
 | **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
@@ -65,26 +66,6 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
-
-### T-034 Telegram Usability Suite: Debate Callback, `/positions`, and Daily Scan Digest
-- Status: `todo`
-- Priority: `High`
-- Related ADRs: [ADR-026](architecture-decisions.md#adr-026-telegram-usability-suite--incremental-market-data-caching)
-- Nested Hierarchy:
-  - **Sub-Task 1: Interactive Agent Debate Inline Button**
-    - Milestone 1.1: Add `[🔬 Agent Debate]` inline callback button to proposal card in `app/telegram_bot.py`.
-    - Milestone 1.2: Handle `debate_{symbol}` callback query to fetch research verdict snapshot and format structured Bear objections vs Bull thesis.
-  - **Sub-Task 2: Active Position Tracker (`/positions`)**
-    - Milestone 2.1: Query open trades from PostgreSQL `trade_audit_log` with current market price and unrealized P&L (₹ / %).
-    - Milestone 2.2: Compute portfolio heat % (sum of risk amounts / total capital) and render clean Markdown scorecard.
-  - **Sub-Task 3: Automated Daily Scan Digest**
-    - Milestone 3.1: Capture macro regime, total screened, technical qualifiers, agent veto breakdown, and proposal list in `pipeline.py`.
-    - Milestone 3.2: Format and push single daily summary message to Telegram at 15:47 IST immediately following universe scan.
-  - Checklists:
-    - [ ] `[🔬 Agent Debate]` button tested and verified
-    - [ ] `/positions` command tested with open, closed, and empty trade states
-    - [ ] Daily Scan Digest tested with positive, negative, and macro-vetoed scans
-    - [ ] 100% pytest suite pass rate
 
 ### T-035 Incremental PostgreSQL OHLCV Caching & Market Data Resilience
 - Status: `todo`
@@ -131,6 +112,17 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 8. Completed Tasks (`done`)
 
+### T-034 Telegram Usability Suite: Debate Callback, `/positions`, and Daily Scan Digest
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-026](architecture-decisions.md#adr-026-telegram-usability-suite--incremental-market-data-caching)
+- Completed Milestones:
+  - [x] Added `[🔬 Agent Debate]` inline callback button to proposal card in `app/telegram_bot.py`
+  - [x] Handled `debate:{symbol}` callback query to fetch research verdict and format structured Bear objections vs Bull thesis
+  - [x] Implemented `/positions` command querying open paper trades with current price, unrealized P&L (₹ / %), stop/target distance, and Portfolio Heat %
+  - [x] Implemented automated Daily Universe Scan Digest notification (`_send_scan_digest`) dispatched immediately following 15:45 IST scan
+  - [x] Added unit tests in `tests/test_telegram_bot.py` with 100% test pass rate
+
 ### T-033 Documentation Synchronicity & Baseline Consolidation
 - Status: `done`
 - Priority: `High`
@@ -140,6 +132,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
   - [x] Established Phase 6 completed capabilities as canonical architecture
   - [x] Formulated ADR-025 (Hybrid UI) and ADR-026 (Telegram Usability Suite & Incremental OHLCV Cache)
   - [x] Structured T-034, T-035, T-036 task hierarchies
+
 
 ### T-031 Walk-Forward Backtesting Framework
 - Status: `done`

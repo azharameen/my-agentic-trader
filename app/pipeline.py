@@ -180,11 +180,58 @@ def run_universe_scan(
                 elif isinstance(state, dict):
                     reason = state.get("rejection_reason") or state.get("execution_details", {}).get("reason", "ERROR")
                     rejected[reason] = rejected.get(reason, 0) + 1
+            scan_duration = time.perf_counter() - scan_started
+
             logger.info(
                 "Scan timing: symbols=%d qualifiers=%d proposed=%d rejected=%s duration_seconds=%.3f",
                 len(universe_symbols), len(qualifiers), len(proposed), rejected,
-                time.perf_counter() - scan_started,
+                scan_duration,
+            )
+            _send_scan_digest(
+                universe_count=len(universe_symbols),
+                duration_seconds=scan_duration,
+                regime_assessment=regime_assessment,
+                qualifiers=qualifiers,
+                proposed=proposed,
+                rejected=rejected,
             )
             return proposed
     finally:
         _scan_lock.release()
+
+
+def _send_scan_digest(
+    universe_count: int,
+    duration_seconds: float,
+    regime_assessment: regime.RegimeAssessment,
+    qualifiers: list[dict],
+    proposed: list[str],
+    rejected: dict[str, int],
+) -> None:
+    """Send an automated summary digest to Telegram immediately following a universe scan."""
+    regime_label = "NORMAL"
+    if regime_assessment.risk_multiplier < 1.0:
+        regime_label = "ELEVATED_VIX (50% Risk)"
+
+    qualifier_symbols = [q["symbol"] for q in qualifiers]
+    qualifiers_str = ", ".join(qualifier_symbols) if qualifier_symbols else "None"
+    proposed_str = ", ".join(proposed) if proposed else "None"
+
+    veto_summary = [f"{count} {reason}" for reason, count in rejected.items()]
+    veto_str = ", ".join(veto_summary) if veto_summary else "0 vetoes"
+
+    vix_str = f"{regime_assessment.vix:.1f}" if regime_assessment.vix is not None else "N/A"
+    nifty_str = f"{regime_assessment.nifty_close:.1f}" if regime_assessment.nifty_close is not None else "N/A"
+
+    lines = [
+        "📊 *Daily Universe Scan Digest*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🌐 *Market Regime:* {regime_label} (VIX: {vix_str} | NIFTY: {nifty_str})",
+        f"🔍 *Universe Screened:* {universe_count} symbols ({duration_seconds:.1f}s)",
+        f"⚡ *Technically Qualified ({len(qualifiers)}):* `{qualifiers_str}`",
+        f"🛑 *Multi-Agent Vetoes ({sum(rejected.values())}):* {veto_str}",
+        f"🎯 *Proposals Generated ({len(proposed)}):* *{proposed_str}*",
+    ]
+
+    telegram_bot.notify_text(get_settings().TELEGRAM_CHAT_ID, "\n".join(lines))
+

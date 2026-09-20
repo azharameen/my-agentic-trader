@@ -553,3 +553,35 @@ def resume_symbol(symbol: str, decision: str) -> dict:
             durability="sync",
             metadata=_trace_metadata(symbol, decision=decision),
         )
+
+
+def get_symbol_state(symbol: str) -> Optional[dict]:
+    """Retrieve the current state values from the most recent thread for a symbol."""
+    graph = build_graph()
+    thread_id = latest_thread_id_for(symbol) or f"trade-{symbol}-{date.today().isoformat()}"
+    config = {"configurable": {"thread_id": thread_id}}
+    state_snapshot = graph.get_state(config)
+    if state_snapshot and state_snapshot.values:
+        return dict(state_snapshot.values)
+    return None
+
+
+def get_symbol_debate(symbol: str) -> Optional[dict]:
+    """Extract structured multi-agent debate and catalyst assessments for a symbol."""
+    state = get_symbol_state(symbol)
+    if not state:
+        return None
+    return {
+        "symbol": symbol,
+        "research_verdict": state.get("research_verdict"),
+        "catalyst_assessment": state.get("catalyst_assessment"),
+        "proposal_card": state.get("proposal_card"),
+        "strategy_name": state.get("strategy_name"),
+        "market_regime": state.get("market_regime"),
+        "citations": (
+            state.get("research_verdict", {}).get("citations", [])
+            if isinstance(state.get("research_verdict"), dict)
+            else []
+        ),
+    }
+

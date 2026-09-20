@@ -41,7 +41,7 @@ from telegram.ext import (
     filters,
 )
 
-from app import chat_agent, executor, universe
+from app import chat_agent, executor, screener, universe
 from app.retry import network_retry
 from config.settings import get_settings
 
@@ -106,6 +106,7 @@ async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE)
 # Callback data prefixes.
 APPROVE = "approve"
 REJECT = "reject"
+DEBATE = "debate"
 
 
 def _format_proposal_card(payload: dict) -> str:
@@ -132,8 +133,118 @@ def _build_keyboard(symbol: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("✅ Approve Trade", callback_data=f"{APPROVE}:{symbol}"),
             InlineKeyboardButton("❌ Reject", callback_data=f"{REJECT}:{symbol}"),
         ],
+        [
+            InlineKeyboardButton("🔬 Agent Debate", callback_data=f"{DEBATE}:{symbol}"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def _format_debate_response(symbol: str, info: Optional[dict]) -> str:
+    """Render the structured multi-agent research debate for a symbol."""
+    if not info or not info.get("research_verdict"):
+        cat = (info or {}).get("catalyst_assessment") if info else None
+        if cat:
+            return (
+                f"🔬 *Research Context: {symbol}*\n"
+                f"• *Catalyst Type:* {cat.get('catalyst_type', 'UNKNOWN')}\n"
+                f"• *Confidence:* {float(cat.get('confidence_score', 0.0)) * 100:.0f}%\n"
+                f"• *Thesis:* {cat.get('thesis_rationale', 'N/A')}"
+            )
+        return f"🔬 *Agent Debate:* No multi-agent debate details available for *{symbol}*."
+
+    verdict = info["research_verdict"]
+    bear = verdict.get("bear_assessment") or {}
+    bull = verdict.get("bull_assessment") or {}
+
+    bear_flags = ", ".join(bear.get("red_flags") or []) or "None identified"
+    bear_rationale = bear.get("bear_rationale", "Clean pullback.")
+    gov_score = bear.get("governance_score", 1.0) * 100
+
+    bull_narrative = bull.get("momentum_thesis", "Strong momentum setup.")
+    bull_vol = bull.get("volume_quality", "Normal accumulation.")
+    tailwinds = ", ".join(bull.get("sector_tailwinds") or []) or "Sector in alignment"
+
+    citations_str = ", ".join(verdict.get("citations") or info.get("citations") or []) or "Market OHLCV, RSS"
+    invalidation = verdict.get("invalidation_conditions") or "Breach of Hard Stop level"
+    confidence = verdict.get("composite_confidence", 0.0) * 100
+
+    return (
+        f"🔬 *Multi-Agent Debate Analysis: {symbol}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🐻 *Bear Risk Critic (Adversarial)*\n"
+        f"• *Governance Health:* {gov_score:.0f}%\n"
+        f"• *Red Flags:* {bear_flags}\n"
+        f"• *Risk Objections:* {bear_rationale}\n\n"
+        f"🐂 *Bull Momentum Analyst (Constructive)*\n"
+        f"• *Momentum Narrative:* {bull_narrative}\n"
+        f"• *Volume Quality:* {bull_vol}\n"
+        f"• *Tailwinds:* {tailwinds}\n\n"
+        f"⚖️ *Synthesis Arbiter Decision*\n"
+        f"• *Verdict:* {verdict.get('verdict', 'BUY')} | *Confidence:* {confidence:.0f}%\n"
+        f"• *Invalidation:* {invalidation}\n"
+        f"• *Citations:* {citations_str}"
+    )
+
+
+def _format_positions() -> str:
+    """Render open paper positions with unrealized P&L and portfolio capital heat."""
+    trades = executor.fetch_all_trades()
+    open_trades = [t for t in trades if t["status"] == "OPEN_PAPER"]
+    if not open_trades:
+        return "📭 No open paper positions currently active."
+
+    total_capital = executor.get_current_capital()
+    total_risk_stake = 0.0
+    total_unrealized_pnl = 0.0
+
+    lines = [
+        f"📈 *Active Paper Positions ({len(open_trades)})*",
+        f"Portfolio Capital: ₹{total_capital:,.2f}",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for t in open_trades:
+        symbol = t["symbol"]
+        fill = float(t.get("fill_price") or t.get("entry_price") or 0.0)
+        qty = int(t.get("quantity") or 0)
+        hard_stop = float(t.get("hard_stop") or 0.0)
+        target = float(t.get("target_price") or 0.0)
+        strategy = t.get("strategy_name") or "PULLBACK"
+
+        # Get latest close price if available
+        snapshot = screener.get_symbol_snapshot(symbol)
+        current_price = float(snapshot["daily_close"]) if snapshot else fill
+
+        unrealized_pnl = (current_price - fill) * qty
+        unrealized_pct = ((current_price - fill) / fill * 100) if fill > 0 else 0.0
+        risk_amt = max(0.0, (fill - hard_stop) * qty)
+        stop_dist_pct = ((current_price - hard_stop) / current_price * 100) if current_price > 0 else 0.0
+        target_dist_pct = ((target - current_price) / current_price * 100) if current_price > 0 else 0.0
+
+        total_risk_stake += risk_amt
+        total_unrealized_pnl += unrealized_pnl
+
+        pnl_sign = "+" if unrealized_pnl >= 0 else ""
+        pnl_icon = "🟢" if unrealized_pnl >= 0 else "🔴"
+
+        lines.append(
+            f"{pnl_icon} *{symbol}* [{strategy}]\n"
+            f"  • Entry: ₹{fill:,.2f} × {qty} | Now: ₹{current_price:,.2f}\n"
+            f"  • P&L: *{pnl_sign}₹{unrealized_pnl:,.2f}* ({pnl_sign}{unrealized_pct:.2f}%)\n"
+            f"  • Stop: ₹{hard_stop:,.2f} (-{stop_dist_pct:.1f}%) | Target: ₹{target:,.2f} (+{target_dist_pct:.1f}%)\n"
+            f"  • Risk at Stake: ₹{risk_amt:,.2f}"
+        )
+
+    heat_pct = (total_risk_stake / total_capital * 100) if total_capital > 0 else 0.0
+    heat_icon = "🟢" if heat_pct <= 5.0 else ("🟡" if heat_pct <= 10.0 else "🔴")
+
+    total_sign = "+" if total_unrealized_pnl >= 0 else ""
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"💰 Total Unrealized P&L: *{total_sign}₹{total_unrealized_pnl:,.2f}*")
+    lines.append(f"{heat_icon} Portfolio Capital Heat: *{heat_pct:.1f}%* (₹{total_risk_stake:,.2f} at risk)")
+
+    return "\n".join(lines)
 
 
 def _auto_configure_chat_id(chat_id: int) -> bool:
@@ -196,6 +307,7 @@ async def _on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*Commands:*\n"
         "• `/scan` — Screen the NIFTY 100 universe & push proposals\n"
         "• `/run SYMBOL` — Run one symbol through the pipeline\n"
+        "• `/positions` — Show active paper positions and portfolio heat\n"
         "• `/trades` — Show the audit log (open & closed paper trades)\n"
         "• `/pending` — List proposals awaiting your approval\n"
         "• `/performance` — Show paper performance scorecard & alpha\n"
@@ -205,6 +317,7 @@ async def _on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "'what are my open trades?', 'status of JSWSTEEL'." + note,
         parse_mode="Markdown",
     )
+
 
 
 def _format_trades() -> str:
@@ -341,6 +454,15 @@ async def _on_performance(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await message.reply_text(report, parse_mode="Markdown")
 
 
+async def _on_positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /positions — show active paper positions and portfolio capital heat."""
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(_format_positions(), parse_mode="Markdown")
+
+
 async def _on_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /status — show read-only operational health."""
     if await _reject_unauthorized(update):
@@ -375,8 +497,15 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     elif action == REJECT:
         graph.resume_symbol(symbol, "REJECTED")
         await query.edit_message_text(f"❌ *Rejected* {symbol}. No order placed.")
+    elif action == DEBATE:
+        debate_info = graph.get_symbol_debate(symbol)
+        text = _format_debate_response(symbol, debate_info)
+        message = update.effective_message
+        if message is not None:
+            await message.reply_text(text, parse_mode="Markdown")
     else:
         await query.edit_message_text(f"⚠️ Unknown action: {action}")
+
 
 
 async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -543,6 +672,7 @@ def start_bot() -> None:
     application.add_handler(CommandHandler("start", _on_start))
     application.add_handler(CommandHandler("scan", _on_scan))
     application.add_handler(CommandHandler("run", _on_run))
+    application.add_handler(CommandHandler("positions", _on_positions))
     application.add_handler(CommandHandler("trades", _on_trades))
     application.add_handler(CommandHandler("pending", _on_pending))
     application.add_handler(CommandHandler("performance", _on_performance))
