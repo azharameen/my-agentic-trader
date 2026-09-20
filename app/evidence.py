@@ -50,6 +50,8 @@ def content_hash(value: object) -> str:
 
 def validate_snapshot(snapshot: EvidenceSnapshot, max_age_seconds: Optional[float] = None) -> None:
     """Reject missing or conflicting critical evidence before proposal use."""
+    if max_age_seconds is None:
+        max_age_seconds = get_settings().EVIDENCE_MAX_AGE_SECONDS or None
     if not snapshot.items:
         raise ValueError("Evidence snapshot must contain at least one item")
     for item in snapshot.items:

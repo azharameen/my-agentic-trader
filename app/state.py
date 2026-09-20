@@ -83,10 +83,10 @@ class ProposalCard(TradeProposal):
     catalyst_type: str
     proposed_at: datetime
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> object:
         return getattr(self, key)
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: object = None) -> object:
         return getattr(self, key, default)
 
     def __contains__(self, key: str) -> bool:
@@ -109,6 +109,7 @@ class TradingState(TypedDict, total=False):
       * `rsi`, `ema_200`, `atr` — technical snapshot, set by screener.
       * `news_headlines`    — raw headlines gathered for the analyst.
       * `catalyst_assessment` — dict form of CatalystAssessment.
+      * `llm_metadata` — non-secret provider/model metadata for attribution.
       * `order_proposal`    — dict form of TradeProposal.
       * `proposal_card`     — the interrupt payload shown to the human (incl. `proposed_at`), used to detect stale approvals.
       * `human_decision`    — "APPROVED" | "REJECTED" | "KILLED" (from interrupt).
@@ -121,13 +122,16 @@ class TradingState(TypedDict, total=False):
     ema_200: float
     atr: float
     news_headlines: list[str]
-    catalyst_assessment: Optional[CatalystAssessment]
-    order_proposal: Optional[TradeProposal]
-    proposal_card: Optional[ProposalCard]
+    catalyst_assessment: Optional[dict]
+    llm_metadata: Optional[dict]
+    order_proposal: Optional[dict]
+    proposal_card: Optional[dict]
     human_decision: Optional[str]
     execution_details: Optional[dict]
+    rejection_reason: Optional[str]
     evidence_snapshot_id: Optional[str]
     source_set: list[str]
+    cache_hits: list[str]
     strategy_name: Optional[str]
     market_regime: Optional[str]
     corporate_events: list[dict]

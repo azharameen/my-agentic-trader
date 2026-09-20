@@ -37,6 +37,7 @@ from langgraph.types import Command, interrupt
 from app import (
     analyst,
     broker,
+    cache,
     checkpoint,
     corporate_events,
     evidence,
@@ -44,8 +45,10 @@ from app import (
     observability,
     risk,
     screener,
+    store,
 )
-from app.state import ProposalCard, TradingState
+from app.llm import provider_metadata
+from app.state import ProposalCard, TradeProposal, TradingState
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -86,7 +89,10 @@ def _analyze_catalyst(state: TradingState) -> dict:
     symbol = state["symbol"]
     headlines = state.get("news_headlines", [])
     assessment = analyst.analyze_catalyst(symbol, headlines)
-    return {"catalyst_assessment": assessment}
+    return {
+        "catalyst_assessment": assessment.model_dump(mode="json"),
+        "llm_metadata": provider_metadata(),
+    }
 
 
 def _calculate_risk(state: TradingState) -> dict:
@@ -106,8 +112,8 @@ def _calculate_risk(state: TradingState) -> dict:
         portfolio_capital=executor.get_current_capital(),
     )
     if proposal is None:
-        return {"human_decision": "REJECTED_RISK"}
-    return {"order_proposal": proposal}
+        return {"human_decision": "REJECTED_RISK", "rejection_reason": "POSITION_SIZE_OR_RISK"}
+    return {"order_proposal": proposal.model_dump(mode="json")}
 
 
 def _human_approval(state: TradingState) -> dict:
@@ -117,8 +123,9 @@ def _human_approval(state: TradingState) -> dict:
     When the graph is resumed with `Command(resume="APPROVED")` or
     `Command(resume="REJECTED")`, `interrupt()` returns that value.
     """
-    proposal = state["order_proposal"]
-    assessment = state.get("catalyst_assessment")
+    proposal = TradeProposal.model_validate(state["order_proposal"])
+    assessment_data = state.get("catalyst_assessment")
+    assessment = analyst.CatalystAssessment.model_validate(assessment_data) if assessment_data else None
     card = ProposalCard(
         symbol=proposal.symbol,
         entry_price=proposal.entry_price,
@@ -132,8 +139,8 @@ def _human_approval(state: TradingState) -> dict:
         catalyst_type=assessment.catalyst_type if assessment else "UNKNOWN",
         proposed_at=datetime.now(timezone.utc),
     )
-    decision = interrupt(card)
-    return {"human_decision": decision, "proposal_card": card}
+    decision = interrupt(card.model_dump(mode="json"))
+    return {"human_decision": decision, "proposal_card": card.model_dump(mode="json")}
 
 
 def _proposal_is_stale(card: ProposalCard | dict, symbol: str, entry_price: float) -> bool:
@@ -168,7 +175,7 @@ def _paper_execute(state: TradingState) -> dict:
     if state.get("human_decision") != "APPROVED":
         return {"execution_details": {"status": "NOT_EXECUTED"}}
 
-    proposal = state["order_proposal"]
+    proposal = TradeProposal.model_validate(state["order_proposal"])
     card = state.get("proposal_card") or {}
     if _proposal_is_stale(card, proposal.symbol, proposal.entry_price):
         logger.warning("Rejecting stale approval for %s (proposed_at=%s).",
@@ -178,7 +185,8 @@ def _paper_execute(state: TradingState) -> dict:
             "execution_details": {"status": "REJECTED_STALE", "reason": "Price moved since proposal; re-run the symbol."},
         }
 
-    assessment = state.get("catalyst_assessment")
+    assessment_data = state.get("catalyst_assessment")
+    assessment = analyst.CatalystAssessment.model_validate(assessment_data) if assessment_data else None
     trade_broker = broker.get_broker(get_settings().TRADING_MODE)
     details = trade_broker.open_trade(
         proposal=proposal,
@@ -193,6 +201,9 @@ def _paper_execute(state: TradingState) -> dict:
         market_regime=state.get("market_regime"),
         catalyst_type=assessment.catalyst_type if assessment else None,
         source_set=state.get("source_set") or [],
+        llm_provider=(state.get("llm_metadata") or {}).get("provider"),
+        llm_model=(state.get("llm_metadata") or {}).get("model"),
+        cache_hits=state.get("cache_hits") or [],
     )
     return {"execution_details": details}
 
@@ -207,11 +218,39 @@ def _route_after_screener(state: TradingState) -> str:
 
 
 def _route_after_analyst(state: TradingState) -> str:
-    assessment = state.get("catalyst_assessment")
+    data = state.get("catalyst_assessment")
+    assessment = analyst.CatalystAssessment.model_validate(data) if data else None
     if assessment is not None and not assessment.is_temporary_pullback:
         # Structural damage / non-pullback -> reject without a human prompt.
         return "rejected"
+    if assessment is not None and assessment.catalyst_type == "GENERAL_MARKET":
+        if state.get("market_regime") in {None, "UNASSESSED"}:
+            logger.warning(
+                "Rejecting %s: GENERAL_MARKET classification has no validated regime evidence.",
+                state["symbol"],
+            )
+            return "rejected"
     return "calculate_risk"
+
+
+def _rejected(state: TradingState) -> dict:
+    """Persist a reason for every terminal rejection."""
+    reason = state.get("rejection_reason")
+    if reason is None:
+        assessment = state.get("catalyst_assessment")
+        if assessment and assessment.get("confidence_score") == 0.0:
+            reason = "ANALYST_UNAVAILABLE"
+        elif assessment and assessment.get("catalyst_type") == "STRUCTURAL_DAMAGE":
+            reason = "STRUCTURAL_DAMAGE"
+        elif assessment and assessment.get("catalyst_type") == "GENERAL_MARKET":
+            reason = "MISSING_MARKET_REGIME_EVIDENCE"
+        elif state.get("human_decision") == "REJECTED_RISK":
+            reason = "RISK_GATE"
+        elif str(state.get("human_decision", "")).startswith("CORPORATE_EVENT_BLACKOUT"):
+            reason = "CORPORATE_EVENT_BLACKOUT"
+        else:
+            reason = "REJECTED"
+    return {"rejection_reason": reason, "execution_details": {"status": "REJECTED", "reason": reason}}
 
 
 def _route_after_risk(state: TradingState) -> str:
@@ -347,14 +386,48 @@ def list_pending_approvals() -> list[dict]:
     return pending
 
 
+def symbol_history(symbol: str, limit: Optional[int] = None) -> list[dict]:
+    """Full checkpoint (time-travel) history for the most recent thread of a symbol.
+
+    Returns one entry per super-step, newest first, using LangGraph's native
+    `get_state_history()` — see
+    https://docs.langchain.com/oss/python/langgraph/use-time-travel. Each
+    entry summarizes what changed, which node runs next, and whether that
+    step paused at a human-approval interrupt. Useful for auditing exactly
+    why a symbol was rejected or approved without re-running the pipeline.
+    """
+    thread_id = latest_thread_id_for(symbol)
+    if thread_id is None:
+        return []
+    g = build_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+    history = []
+    for snapshot in g.get_state_history(config, limit=limit):
+        history.append({
+            "next": list(snapshot.next),
+            "values": {
+                key: value for key, value in (snapshot.values or {}).items()
+                if key != "news_headlines"
+            },
+            "created_at": snapshot.created_at,
+            "paused_for_approval": bool(snapshot.interrupts),
+        })
+    return history
+
+
 def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
-    """Compile the trading StateGraph with a SQLite checkpointer.
+    """Compile the trading StateGraph with a SQLite checkpointer and store.
 
     Parameters
     ----------
     checkpointer:
         Optional pre-built `SqliteSaver`. If omitted, the process-wide saver
         backed by `CHECKPOINT_DB_PATH` is used.
+
+    The compiled graph also carries the shared long-term `SqliteStore`
+    (`app.store`) so future nodes/tools can read or write namespaced,
+    cross-thread memory (e.g. the operator profile) via LangGraph's native
+    store API without introducing a second persistence mechanism.
 
     Returns
     -------
@@ -370,7 +443,7 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
     graph.add_node("calculate_risk", _calculate_risk)
     graph.add_node("human_approval", _human_approval)
     graph.add_node("paper_execute", _paper_execute)
-    graph.add_node("rejected", lambda s: {"execution_details": {"status": "REJECTED"}})
+    graph.add_node("rejected", _rejected)
 
     graph.add_edge(START, "math_screener")
     graph.add_conditional_edges(
@@ -392,7 +465,20 @@ def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
     graph.add_edge("paper_execute", END)
     graph.add_edge("rejected", END)
 
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(checkpointer=checkpointer, store=store.get_store())
+
+
+def _trace_metadata(symbol: str, decision: Optional[str]) -> dict:
+    """Structured metadata attached to every LangGraph invocation so traces
+    in LangSmith can be filtered/searched by symbol, strategy, and outcome
+    (see ADR-021 — these are non-secret tags, never credentials).
+    """
+    return {
+        "symbol": symbol,
+        "strategy": get_settings().SETUP_STRATEGY,
+        "trader": "nifty100-swing",
+        "decision": decision or "pending",
+    }
 
 
 def run_symbol(
@@ -436,6 +522,8 @@ def run_symbol(
             "ema_200": snapshot["ema_200"],
             "atr": snapshot["atr"],
         })
+        if snapshot.get("cache_hit"):
+            initial_state["cache_hits"] = ["technical"]
     items = []
     if all(key in initial_state for key in ("daily_close", "rsi", "ema_200", "atr")):
         items.append(
@@ -459,10 +547,44 @@ def run_symbol(
     if items:
         stored_snapshot = evidence.EvidenceSnapshot(symbol=symbol, items=items)
         evidence.validate_snapshot(stored_snapshot)
-        initial_state["evidence_snapshot_id"] = evidence.save_snapshot(stored_snapshot)
+        snapshot_key = evidence.content_hash(
+            [
+                {
+                    **item.model_dump(mode="json"),
+                    "provenance": {
+                        key: value
+                        for key, value in item.provenance.model_dump(mode="json").items()
+                        if key not in {"fetched_at", "freshness_seconds"}
+                    },
+                }
+                for item in stored_snapshot.items
+            ]
+        )
+        cached_snapshot_id = cache.get_value("evidence_snapshot", snapshot_key)
+        if cached_snapshot_id:
+            cached_snapshot = evidence.load_snapshot(cached_snapshot_id)
+            evidence.validate_snapshot(cached_snapshot)
+            initial_state["evidence_snapshot_id"] = cached_snapshot_id
+            initial_state["cache_hits"] = [*initial_state.get("cache_hits", []), "evidence"]
+        else:
+            snapshot_id = evidence.save_snapshot(stored_snapshot)
+            cache.set_value(
+                "evidence_snapshot", snapshot_key, snapshot_id,
+                get_settings().EVIDENCE_CACHE_MINUTES,
+            )
+            initial_state["evidence_snapshot_id"] = snapshot_id
         initial_state["source_set"] = stored_snapshot.source_set
     with observability.span("graph.run_symbol", symbol=symbol):
-        return graph.invoke(initial_state, config)
+        # durability="sync": every checkpoint (screener -> catalyst -> risk ->
+        # interrupt) is persisted before the next node starts. A paper-trading
+        # approval pipeline must survive a process crash mid-run without ever
+        # silently losing a proposal or re-running risk math from a stale
+        # state. See https://docs.langchain.com/oss/python/langgraph/checkpointers#durability-modes.
+        return graph.invoke(
+            initial_state, config,
+            durability="sync",
+            metadata=_trace_metadata(symbol, decision=None),
+        )
 
 
 def resume_symbol(symbol: str, decision: str) -> dict:
@@ -484,4 +606,8 @@ def resume_symbol(symbol: str, decision: str) -> dict:
     config = {"configurable": {"thread_id": thread_id}}
     _record_thread(thread_id, symbol)
     with observability.span("graph.resume_symbol", symbol=symbol, decision=decision):
-        return graph.invoke(Command(resume=decision), config)
+        return graph.invoke(
+            Command(resume=decision), config,
+            durability="sync",
+            metadata=_trace_metadata(symbol, decision=decision),
+        )

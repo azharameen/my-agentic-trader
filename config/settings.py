@@ -41,11 +41,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # LLM (qualitative research filter only — never makes trade decisions)
     # ------------------------------------------------------------------ #
-    # The analyst uses any OpenAI-compatible chat endpoint (OpenAI, Azure
-    # OpenAI, Ollama, vLLM, LM Studio, corporate gateways, ...).
+    # The analyst uses one explicitly selected LangChain provider.
+    LLM_PROVIDER: str = Field(
+        default="openai_compatible",
+        description="Active provider: openai_compatible, openai, gemini, anthropic, or groq.",
+    )
     OPENAI_API_KEY: str = Field(
         default="",
-        description="API key for the OpenAI-compatible endpoint used by the analyst.",
+        description="API key for OpenAI or an OpenAI-compatible gateway.",
     )
     OPENAI_BASE_URL: str = Field(
         default="",
@@ -54,6 +57,23 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = Field(
         default="gpt-4o-mini",
         description="Chat model id served by the endpoint.",
+    )
+    GOOGLE_API_KEY: str = Field(default="")
+    GEMINI_MODEL: str = Field(default="gemini-2.0-flash")
+    ANTHROPIC_API_KEY: str = Field(default="")
+    ANTHROPIC_MODEL: str = Field(default="claude-3-5-haiku-latest")
+    GROQ_API_KEY: str = Field(default="")
+    GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile")
+    LLM_TIMEOUT_SECONDS: int = Field(default=20)
+    LLM_MAX_RETRIES: int = Field(default=1)
+    RESEARCH_CACHE_ENABLED: bool = Field(default=True)
+    TECHNICAL_CACHE_MINUTES: int = Field(default=360)
+    NEWS_CACHE_MINUTES: int = Field(default=30)
+    CATALYST_CACHE_MINUTES: int = Field(default=1440)
+    EVIDENCE_CACHE_MINUTES: int = Field(default=1440)
+    EVIDENCE_MAX_AGE_SECONDS: int = Field(
+        default=0,
+        description="Maximum evidence age for proposal validation; 0 disables the global default.",
     )
 
     # ------------------------------------------------------------------ #
@@ -111,6 +131,14 @@ class Settings(BaseSettings):
         default="data/checkpoints.db",
         description="SQLite path for LangGraph SqliteSaver checkpoints.",
     )
+    STORE_DB_PATH: str = Field(
+        default="data/store.db",
+        description="SQLite path for the LangGraph long-term memory store (operator profile, cross-thread notes).",
+    )
+    DATABASE_BACKUP_DIR: str = Field(
+        default="data/backups",
+        description="Directory for timestamped SQLite backups.",
+    )
 
     # ------------------------------------------------------------------ #
     # Screener parameters
@@ -146,6 +174,23 @@ class Settings(BaseSettings):
     OTEL_CONSOLE_EXPORTER: bool = Field(
         default=False,
         description="Export enabled OpenTelemetry spans to stdout for local debugging.",
+    )
+    LANGSMITH_TRACING_ENABLED: bool = Field(
+        default=False,
+        description="Opt-in LangSmith tracing for LangGraph/LangChain runs (ADR-021). "
+        "Off by default; requires LANGSMITH_API_KEY to actually activate.",
+    )
+    LANGSMITH_API_KEY: str = Field(
+        default="",
+        description="LangSmith API key. Never logged; stays in .env/secret storage only.",
+    )
+    LANGSMITH_PROJECT: str = Field(
+        default="traid-nifty100",
+        description="LangSmith project name traces are grouped under.",
+    )
+    LANGSMITH_ENDPOINT: str = Field(
+        default="",
+        description="Optional custom LangSmith endpoint (self-hosted). Empty = default SaaS endpoint.",
     )
 
     # ------------------------------------------------------------------ #
@@ -197,11 +242,31 @@ class Settings(BaseSettings):
     )
     SCAN_CRON_HOUR: int = Field(
         default=15,
-        description="Hour (IST, 24h) of the daily automatic universe scan.",
+        description="Hour (24h) of the daily automatic universe scan.",
     )
     SCAN_CRON_MINUTE: int = Field(
         default=45,
         description="Minute of the daily automatic universe scan (post NSE close).",
+    )
+    SCAN_CRON_DAYS: str = Field(
+        default="mon-fri",
+        description="APScheduler cron day-of-week expression for the daily scan (e.g. 'mon-fri').",
+    )
+    SCHEDULER_TIMEZONE: str = Field(
+        default="Asia/Kolkata",
+        description="Timezone used for all APScheduler cron jobs.",
+    )
+    UNIVERSE_REFRESH_DAY_OF_MONTH: int = Field(
+        default=1,
+        description="Day of month for the monthly universe refresh.",
+    )
+    UNIVERSE_REFRESH_HOUR: int = Field(
+        default=6,
+        description="Hour (24h) of the monthly universe refresh.",
+    )
+    UNIVERSE_REFRESH_MINUTE: int = Field(
+        default=0,
+        description="Minute of the monthly universe refresh.",
     )
 
 

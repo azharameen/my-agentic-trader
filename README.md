@@ -129,7 +129,19 @@ python -m app.main run RELIANCE
 
 # Start scheduler + Telegram bot (long-running)
 python -m app.main serve
+
+# Check and back up local SQLite databases
+python -m app.main check-databases
+python -m app.main backup-databases
+
+# Evaluate paper-trade outcomes
+python -m app.main evaluate
 ```
+
+Press `Ctrl+C` once to stop the scheduler and Telegram polling gracefully. The
+process waits briefly for the bot thread to close before exiting. If an older
+process was started before this lifecycle fix, terminate that process once and
+restart it to load the new shutdown behavior.
 
 ---
 

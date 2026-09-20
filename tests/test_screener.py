@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.screener import _compute_indicators, _passes_setup_filter
+from app.screener import _compute_indicators, _passes_setup_filter, _to_nse_symbol, canonical_symbol
 
 
 def _row(**overrides) -> pd.Series:
@@ -17,6 +17,12 @@ def _row(**overrides) -> pd.Series:
 
 def test_qualifying_row_passes():
     assert _passes_setup_filter(_row())
+
+
+@pytest.mark.parametrize("value", ["SIEMENS", "SIEMENS.NS", "SIEMENS.NSE"])
+def test_nse_symbol_normalization_does_not_duplicate_suffix(value):
+    assert _to_nse_symbol(value) == "SIEMENS.NS"
+    assert canonical_symbol(value) == "SIEMENS"
 
 
 def test_price_below_ema_fails():

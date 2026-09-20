@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -41,6 +43,30 @@ from app import chat_agent, executor, universe
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _is_authorized(update: Update) -> bool:
+    """Allow only the configured operator's direct chat."""
+    chat = getattr(update, "effective_chat", None)
+    configured = get_settings().TELEGRAM_CHAT_ID
+    return chat is not None and bool(configured) and str(chat.id) == configured
+
+
+async def _reject_unauthorized(update: Update) -> bool:
+    if _is_authorized(update):
+        return False
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text("This private bot is configured for its registered operator only.")
+    return True
+
+
+async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    error = context.error
+    if isinstance(error, NetworkError):
+        logger.warning("Telegram polling network error; polling will retry: %s", error)
+        return
+    logger.exception("Telegram update failed: %s", error)
 
 # Callback data prefixes. The symbol is appended after the colon so a single
 # callback handler can dispatch on the action.
@@ -124,20 +150,27 @@ def _auto_configure_chat_id(chat_id: int) -> bool:
 
 async def _on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greet the operator on /start and self-configure the chat id."""
-    chat_id = update.effective_chat.id
+    if get_settings().TELEGRAM_CHAT_ID and await _reject_unauthorized(update):
+        return
+    chat = update.effective_chat
+    message = update.effective_message
+    if chat is None or message is None:
+        return
+    chat_id = chat.id
     updated = _auto_configure_chat_id(chat_id)
     note = (
         "\n\n✅ Chat id auto-saved to .env — proposals will now be delivered here."
         if updated
         else ""
     )
-    await update.message.reply_text(
+    await message.reply_text(
         "\U0001F916 NIFTY 100 Swing Trading Assistant online.\n"
         "Commands:\n"
         "/scan — screen the NIFTY 100 universe & push proposals\n"
         "/run SYMBOL — run one symbol through the pipeline\n"
         "/trades — show the audit log (open & closed paper trades)\n"
         "/pending — list proposals awaiting your approval\n"
+        "/status — show read-only system health\n"
         "Approve / reject proposals via the inline buttons.\n"
         "Or just ask me anything in plain text — e.g. 'why did TITAN qualify?',\n"
         "'what are my open trades?', 'status of JSWSTEEL'." + note
@@ -178,7 +211,6 @@ def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
     Running it on the bot's event loop would stall polling, so it goes on a
     worker thread. Proposals are pushed to Telegram by the pipeline itself.
     """
-    import threading
 
     def _work() -> None:
         from app import pipeline
@@ -198,11 +230,12 @@ def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
         except Exception as exc:  # noqa: BLE001
             summary = f"⚠️ Pipeline error: {exc}"
         # Deliver the summary on the bot's loop (thread-safe).
-        if _bot_loop is not None:
+        message = update.effective_message
+        if message is not None and _bot_loop is not None:
             import asyncio
 
             asyncio.run_coroutine_threadsafe(
-                update.message.reply_text(summary, parse_mode="Markdown"), _bot_loop
+                message.reply_text(summary, parse_mode="Markdown"), _bot_loop
             )
 
     threading.Thread(target=_work, name="pipeline-worker", daemon=True).start()
@@ -210,24 +243,38 @@ def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
 
 async def _on_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /scan — screen the universe and push proposals."""
-    await update.message.reply_text("🔍 Scanning the NIFTY 100 universe… this takes a few minutes.")
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    if message is None:
+        return
+    await message.reply_text("🔍 Scanning the NIFTY 100 universe… this takes a few minutes.")
     _run_pipeline_in_thread(update, symbol=None)
 
 
 async def _on_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /run SYMBOL — run a single symbol through the pipeline."""
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    if message is None:
+        return
     args = (context.args or [])
     if not args:
-        await update.message.reply_text("Usage: /run SYMBOL  (e.g. /run RELIANCE)")
+        await message.reply_text("Usage: /run SYMBOL  (e.g. /run RELIANCE)")
         return
     symbol = args[0].upper()
-    await update.message.reply_text(f"🔍 Running *{symbol}* through the pipeline…", parse_mode="Markdown")
+    await message.reply_text(f"🔍 Running *{symbol}* through the pipeline…", parse_mode="Markdown")
     _run_pipeline_in_thread(update, symbol=symbol)
 
 
 async def _on_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /trades — show the audit log."""
-    await update.message.reply_text(_format_trades(), parse_mode="Markdown")
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(_format_trades(), parse_mode="Markdown")
 
 
 def _format_pending() -> str:
@@ -248,30 +295,49 @@ def _format_pending() -> str:
 
 async def _on_pending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /pending — list proposals awaiting approval."""
-    await update.message.reply_text(_format_pending(), parse_mode="Markdown")
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(_format_pending(), parse_mode="Markdown")
+
+
+async def _on_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /status — show read-only operational health."""
+    if await _reject_unauthorized(update):
+        return
+    from app import health
+
+    message = update.effective_message
+    if message is not None:
+        await message.reply_text(health.format_summary(health.get_summary()), parse_mode="Markdown")
 
 
 async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle inline button presses and resume the paused graph thread."""
     from app import graph
 
+    if await _reject_unauthorized(update):
+        return
     query = update.callback_query
+    if query is None or query.data is None:
+        return
     await query.answer()
 
     try:
         action, symbol = query.data.split(":", 1)
     except ValueError:
-        await query.edit_reply_text("⚠️ Malformed callback.")
+        await query.edit_message_text("⚠️ Malformed callback.")
         return
 
     if action == APPROVE:
         result = graph.resume_symbol(symbol, "APPROVED")
-        await query.edit_reply_text(f"✅ *Approved* {symbol}\n{result.get('execution_details', {})}")
+        await query.edit_message_text(f"✅ *Approved* {symbol}\n{result.get('execution_details', {})}")
     elif action == REJECT:
         graph.resume_symbol(symbol, "REJECTED")
-        await query.edit_reply_text(f"❌ *Rejected* {symbol}. No order placed.")
+        await query.edit_message_text(f"❌ *Rejected* {symbol}. No order placed.")
     else:
-        await query.edit_reply_text(f"⚠️ Unknown action: {action}")
+        await query.edit_message_text(f"⚠️ Unknown action: {action}")
 
 async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route free-text messages to the conversational research agent.
@@ -279,22 +345,27 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     The agent is blocking (LLM + possibly yfinance), so it runs on a worker
     thread; the reply is delivered back on the bot's event loop.
     """
-    question = (update.message.text or "").strip()
+    if await _reject_unauthorized(update):
+        return
+    message = update.effective_message
+    chat = update.effective_chat
+    if message is None or chat is None:
+        return
+    question = (message.text or "").strip()
     if not question:
         return
-    await update.message.reply_text("🤔 Thinking…")
+    await message.reply_text("🤔 Thinking…")
 
-    import threading
 
     def _work() -> None:
 
-        thread_id = f"telegram-chat-{update.effective_chat.id}"
+        thread_id = f"telegram-chat-{chat.id}"
         answer = chat_agent.ask(question, thread_id=thread_id)
         if _bot_loop is not None:
             import asyncio
 
             asyncio.run_coroutine_threadsafe(
-                update.message.reply_text(answer[:4000]), _bot_loop
+                message.reply_text(answer[:4000]), _bot_loop
             )
 
     threading.Thread(target=_work, name="chat-agent-worker", daemon=True).start()
@@ -331,7 +402,7 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
         return True
 
 
-def _post_telegram_message(url: str, body: dict):
+def _post_telegram_message(url: str, body: dict) -> Any:
     import requests
 
     return requests.post(url, json=body, timeout=15)
@@ -448,7 +519,7 @@ def start_bot() -> None:
     Long polling means the bot opens outbound HTTPS connections to Telegram,
     so it works from a private Docker network with no inbound ports.
     """
-    global _running_application
+    global _bot_loop, _running_application
     settings = get_settings()
     if not settings.TELEGRAM_BOT_TOKEN:
         logger.warning("TELEGRAM_BOT_TOKEN not set; HITL bot disabled.")
@@ -462,13 +533,32 @@ def start_bot() -> None:
     application.add_handler(CommandHandler("run", _on_run))
     application.add_handler(CommandHandler("trades", _on_trades))
     application.add_handler(CommandHandler("pending", _on_pending))
+    application.add_handler(CommandHandler("status", _on_status))
     application.add_handler(CallbackQueryHandler(_on_callback))
     # Free text (non-command) goes to the conversational research agent.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
+    application.add_error_handler(_on_telegram_error)
     # Capture the loop as soon as it starts so other threads can schedule work.
     application.post_init = _capture_loop
     if application.job_queue is not None:
         application.job_queue.run_repeating(_write_heartbeat, interval=30, first=0)
 
     logger.info("Starting Telegram long-polling bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        _running_application = None
+        _bot_loop = None
+
+
+def stop_bot() -> None:
+    """Ask run_polling to perform its normal graceful shutdown."""
+    application = _running_application
+    loop = _bot_loop
+    if application is None or loop is None or not loop.is_running():
+        return
+
+    try:
+        loop.call_soon_threadsafe(application.stop_running)
+    except RuntimeError as exc:
+        logger.warning("Telegram bot shutdown did not complete cleanly: %s", exc)

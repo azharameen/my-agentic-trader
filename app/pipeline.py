@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Optional
 
 from app import (
@@ -23,6 +24,7 @@ from app import (
     news,
     observability,
     outbox,
+    regime,
     screener,
     telegram_bot,
 )
@@ -65,6 +67,8 @@ def process_symbol(
     Returns the final graph state (or the interrupt state if paused at
     `human_approval`).
     """
+    symbol = screener.canonical_symbol(symbol)
+    started = time.perf_counter()
     with observability.span("pipeline.process_symbol", symbol=symbol):
         logger.info("Processing %s ...", symbol)
         try:
@@ -73,7 +77,10 @@ def process_symbol(
             state = graph.run_symbol(symbol, news_headlines, snapshot=snapshot, events=events)
         except Exception as exc:  # noqa: BLE001 - one bad symbol must not kill a scan
             logger.exception("Failed to process %s", symbol)
-            return {"execution_details": {"status": "ERROR", "error": str(exc)}}
+            return {
+                "execution_details": {"status": "ERROR", "error": str(exc)},
+                "timing": {"process_symbol_seconds": round(time.perf_counter() - started, 3)},
+            }
 
     interrupts = state.get("__interrupt__") if isinstance(state, dict) else None
     if interrupts:
@@ -85,10 +92,18 @@ def process_symbol(
         observability.event("proposal.created", symbol=symbol)
     else:
         logger.info("Thread for %s completed: %s", symbol, state.get("execution_details"))
+    if isinstance(state, dict):
+        state["timing"] = {
+            **state.get("timing", {}),
+            "process_symbol_seconds": round(time.perf_counter() - started, 3),
+        }
     return state
 
 
-def run_universe_scan(universe_symbols: list[str]) -> list[str]:
+def run_universe_scan(
+    universe_symbols: list[str],
+    regime_assessment: regime.RegimeAssessment | None = None,
+) -> list[str]:
     """Check open positions, scan the universe, and run each qualifier through the graph.
 
     Returns the list of symbols that produced a proposal (paused at
@@ -99,10 +114,15 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
         raise ScanInProgressError("A universe scan is already running.")
 
     try:
+        scan_started = time.perf_counter()
         with observability.span("pipeline.run_universe_scan", symbol_count=len(universe_symbols)):
             outbox.deliver_pending(telegram_bot.send_proposal_to_chat)
             closed = monitor.check_open_trades()
             _notify_closed_trades(closed)
+
+            if regime_assessment is not None and not regime_assessment.allow_new_entries:
+                logger.warning("Scan blocked by market regime: %s", regime_assessment.reasons)
+                return []
 
             logger.info("Scanning universe (%d symbols)...", len(universe_symbols))
             events = corporate_events.fetch_events()
@@ -110,6 +130,7 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
             logger.info("%d symbols qualified for analysis.", len(qualifiers))
 
             proposed: list[str] = []
+            rejected: dict[str, int] = {}
             for row in qualifiers:
                 try:
                     headlines = news.fetch_headlines(row["symbol"])
@@ -124,6 +145,14 @@ def run_universe_scan(universe_symbols: list[str]) -> list[str]:
                     continue
                 if isinstance(state, dict) and state.get("__interrupt__"):
                     proposed.append(row["symbol"])
+                elif isinstance(state, dict):
+                    reason = state.get("rejection_reason") or state.get("execution_details", {}).get("reason", "ERROR")
+                    rejected[reason] = rejected.get(reason, 0) + 1
+            logger.info(
+                "Scan timing: symbols=%d qualifiers=%d proposed=%d rejected=%s duration_seconds=%.3f",
+                len(universe_symbols), len(qualifiers), len(proposed), rejected,
+                time.perf_counter() - scan_started,
+            )
             return proposed
     finally:
         _scan_lock.release()

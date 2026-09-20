@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from app import checkpoint, market_data, screener, state, universe
+from config.settings import get_settings
 
 
 def _ohlcv() -> pd.DataFrame:
@@ -36,6 +37,8 @@ def test_market_data_result_preserves_source_provenance():
 
 
 def test_screener_uses_one_history_loader_for_single_and_universe_paths(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CACHE_ENABLED", "false")
+    get_settings.cache_clear()
     calls: list[str] = []
 
     def fake_history(symbol: str, period: str) -> market_data.MarketDataResult:

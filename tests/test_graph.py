@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app import analyst, executor, graph, screener
 from app.state import CatalystAssessment
+from config.settings import get_settings
 
 _SNAPSHOT = {"daily_close": 100.0, "rsi": 30.0, "ema_200": 90.0, "atr": 2.0}
 
@@ -28,6 +31,15 @@ def _structural_damage_assessment(*_args, **_kwargs):
     )
 
 
+def _unsupported_market_assessment(*_args, **_kwargs):
+    return CatalystAssessment(
+        is_temporary_pullback=True,
+        confidence_score=0.5,
+        thesis_rationale="No stock-specific evidence was available.",
+        catalyst_type="GENERAL_MARKET",
+    )
+
+
 def test_qualifying_symbol_pauses_for_approval(monkeypatch):
     monkeypatch.setattr(analyst, "analyze_catalyst", _pullback_assessment)
     state = graph.run_symbol("TESTPASS", snapshot=_SNAPSHOT)
@@ -40,6 +52,16 @@ def test_qualifying_symbol_pauses_for_approval(monkeypatch):
 def test_structural_damage_rejects_without_human_prompt(monkeypatch):
     monkeypatch.setattr(analyst, "analyze_catalyst", _structural_damage_assessment)
     state = graph.run_symbol("TESTBAD", snapshot=_SNAPSHOT)
+    assert "__interrupt__" not in state
+    assert state["execution_details"]["status"] == "REJECTED"
+    assert state["rejection_reason"] == "STRUCTURAL_DAMAGE"
+
+
+def test_general_market_without_regime_evidence_rejects_without_proposal(monkeypatch):
+    monkeypatch.setattr(analyst, "analyze_catalyst", _unsupported_market_assessment)
+
+    state = graph.run_symbol("NOREGIME", snapshot=_SNAPSHOT)
+
     assert "__interrupt__" not in state
     assert state["execution_details"]["status"] == "REJECTED"
 
@@ -86,3 +108,68 @@ def test_stale_proposal_with_price_drift_is_rejected(monkeypatch):
 def test_recent_proposal_is_never_stale():
     fresh_card = {"proposed_at": datetime.now(timezone.utc).isoformat()}
     assert graph._proposal_is_stale(fresh_card, "ANY", entry_price=100.0) is False
+
+
+def test_precomputed_technical_cache_hit_is_preserved_in_state(monkeypatch):
+    monkeypatch.setattr(analyst, "analyze_catalyst", _pullback_assessment)
+    snapshot = {**_SNAPSHOT, "cache_hit": True}
+
+    state = graph.run_symbol("TECHCACHE", snapshot=snapshot)
+
+    assert "technical" in state["cache_hits"]
+
+
+def test_identical_evidence_reuses_snapshot_despite_fresh_fetch_times(monkeypatch):
+    monkeypatch.setattr(analyst, "analyze_catalyst", _pullback_assessment)
+
+    first = graph.run_symbol("EVIDENCECACHE", snapshot=_SNAPSHOT, news_headlines=["Same headline"])
+    second = graph.run_symbol("EVIDENCECACHE", snapshot=_SNAPSHOT, news_headlines=["Same headline"])
+
+    assert first["evidence_snapshot_id"] == second["evidence_snapshot_id"]
+    assert "evidence" in second["cache_hits"]
+
+
+def test_evidence_cache_reuse_revalidates_configured_age(monkeypatch):
+    monkeypatch.setattr(analyst, "analyze_catalyst", _pullback_assessment)
+    monkeypatch.setenv("EVIDENCE_MAX_AGE_SECONDS", "0")
+    get_settings.cache_clear()
+    graph.run_symbol("EVIDENCEAGE", snapshot=_SNAPSHOT)
+
+    monkeypatch.setenv("EVIDENCE_MAX_AGE_SECONDS", "-1")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="Evidence is stale"):
+        graph.run_symbol("EVIDENCEAGE", snapshot=_SNAPSHOT)
+
+
+def test_build_graph_is_compiled_with_the_shared_long_term_store():
+    compiled = graph.build_graph()
+
+    assert compiled.store is not None
+
+
+def test_symbol_history_returns_ordered_checkpoint_steps(monkeypatch):
+    monkeypatch.setattr(analyst, "analyze_catalyst", _pullback_assessment)
+    graph.run_symbol("HISTORYSYMBOL", snapshot=_SNAPSHOT)
+
+    history = graph.symbol_history("HISTORYSYMBOL")
+
+    assert len(history) >= 2
+    assert history[0]["next"] == ["human_approval"]
+    assert history[0]["paused_for_approval"] is True
+    assert history[-1]["next"] == ["__start__"]
+
+
+def test_trace_metadata_builder_marks_normal_run():
+    metadata = graph._trace_metadata("RELIANCE", decision=None)
+
+    assert metadata["symbol"] == "RELIANCE"
+    assert metadata["strategy"] == "pullback_in_uptrend"
+    assert metadata["trader"] == "nifty100-swing"
+    assert metadata["decision"] == "pending"
+
+
+def test_trace_metadata_builder_marks_terminal_decision():
+    metadata = graph._trace_metadata("RELIANCE", decision="REJECTED_RISK")
+
+    assert metadata["decision"] == "REJECTED_RISK"
+    assert metadata["symbol"] == "RELIANCE"

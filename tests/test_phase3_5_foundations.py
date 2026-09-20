@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from app import broker, executor, observability, outbox, pipeline
+from app import broker, executor, observability, outbox, pipeline, regime
 from app.state import TradeProposal
 from app.strategies import PullbackInUptrendStrategy, get_setup_strategy
 from config.settings import get_settings
@@ -111,6 +111,24 @@ def test_universe_scan_continues_if_one_symbol_fails(monkeypatch):
 
     proposed = pipeline.run_universe_scan(["FAILME", "OKAY"])
     assert proposed == ["OKAY"]
+
+
+def test_scan_blocks_before_screening_when_regime_vetoes(monkeypatch):
+    monkeypatch.setattr(pipeline.monitor, "check_open_trades", lambda: [])
+    monkeypatch.setattr(pipeline.outbox, "deliver_pending", lambda sender: 0)
+    monkeypatch.setattr(pipeline.corporate_events, "fetch_events", lambda: [])
+    monkeypatch.setattr(pipeline.screener, "scan_nifty_universe", lambda _: pytest.fail("screening ran"))
+
+    result = pipeline.run_universe_scan(
+        ["TEST"],
+        regime_assessment=regime.RegimeAssessment(
+            allow_new_entries=False,
+            risk_multiplier=0.0,
+            reasons=["INDIA_VIX"],
+        ),
+    )
+
+    assert result == []
 
 
 def test_evaluation_fixture_is_valid_jsonl():

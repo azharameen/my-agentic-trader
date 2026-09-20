@@ -6,6 +6,7 @@ import pytest
 
 from app import evidence, executor, regime, risk
 from app.risk import calculate_risk
+from config.settings import get_settings
 
 
 def test_regime_blocks_new_entries_when_vix_is_extreme():
@@ -22,6 +23,18 @@ def test_regime_halves_risk_when_vix_is_elevated():
     assert result.allow_new_entries is True
     assert result.risk_multiplier == 0.5
     assert result.reasons == ["INDIA_VIX_ELEVATED"]
+
+
+def test_elevated_regime_scales_deterministic_risk_budget():
+    normal = calculate_risk("NORMAL", entry_price=100.0, atr=2.0, portfolio_capital=100_000)
+    reduced = calculate_risk(
+        "REDUCED", entry_price=100.0, atr=2.0, portfolio_capital=100_000,
+        risk_multiplier=0.5,
+    )
+
+    assert normal is not None and reduced is not None
+    assert reduced.risk_amount == normal.risk_amount / 2
+    assert reduced.quantity == normal.quantity // 2
 
 
 def test_regime_blocks_when_nifty_is_below_ema():
@@ -99,3 +112,24 @@ def test_evidence_snapshot_rejects_stale_items():
 
     with pytest.raises(ValueError, match="Evidence is stale"):
         evidence.validate_snapshot(snapshot, max_age_seconds=60)
+
+
+def test_evidence_snapshot_uses_configured_default_age(monkeypatch):
+    monkeypatch.setenv("EVIDENCE_MAX_AGE_SECONDS", "60")
+    get_settings.cache_clear()
+    snapshot = evidence.EvidenceSnapshot(
+        items=[
+            evidence.EvidenceItem(
+                kind="MARKET",
+                payload={"close": 100},
+                provenance=evidence.Provenance(
+                    source="test",
+                    fetched_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+                ),
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Evidence is stale"):
+        evidence.validate_snapshot(snapshot)
+    get_settings.cache_clear()

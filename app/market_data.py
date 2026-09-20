@@ -9,6 +9,20 @@ import pandas as pd
 import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+REQUIRED_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
+
+
+def _validate_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = set(REQUIRED_COLUMNS) - set(frame.columns)
+    if missing:
+        raise ValueError(f"Market data missing required columns: {sorted(missing)}")
+    values = frame.loc[:, REQUIRED_COLUMNS].apply(pd.to_numeric, errors="coerce")
+    if values.isna().any().any():
+        raise ValueError("Market data contains non-numeric OHLCV values")
+    if (values["Volume"] < 0).any():
+        raise ValueError("Market data contains negative volume")
+    return values
+
 
 @dataclass(frozen=True)
 class MarketDataResult:
@@ -29,6 +43,7 @@ def load_history(nse_symbol: str, period: str) -> MarketDataResult:
         raise ValueError(f"No market data returned for {nse_symbol}")
     if isinstance(frame.columns, pd.MultiIndex):
         frame.columns = frame.columns.get_level_values(0)
+    _validate_frame(frame)
     return MarketDataResult(
         frame=frame,
         source="yfinance",

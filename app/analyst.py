@@ -16,8 +16,11 @@ human approver can reject the trade.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from app.llm import build_chat_openai
+from app import cache
+from app.evidence import content_hash
+from app.llm import build_chat_model, is_configured, provider_metadata
 from app.state import CatalystAssessment
 from config.settings import get_settings
 
@@ -55,9 +58,9 @@ Rules:
 """
 
 
-def _build_llm():
+def _build_llm() -> Any:
     """Instantiate the OpenAI-compatible chat model from settings."""
-    return build_chat_openai()
+    return build_chat_model()
 
 
 def analyze_catalyst(symbol: str, news_headlines: list[str]) -> CatalystAssessment:
@@ -77,10 +80,19 @@ def analyze_catalyst(symbol: str, news_headlines: list[str]) -> CatalystAssessme
         error, schema violation) this returns a conservative fallback that
         fails the trade closed rather than letting a bad signal through.
     """
-    settings = get_settings()
-    if not settings.OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not set; returning conservative fallback for %s.", symbol)
+    if not is_configured():
+        logger.warning("Configured LLM provider is unavailable; rejecting %s conservatively.", symbol)
         return _FALLBACK_ASSESSMENT
+
+    metadata = provider_metadata()
+    cache_key = content_hash({
+        "symbol": symbol.upper(),
+        "headlines": news_headlines,
+        **metadata,
+    })
+    cached, _cache_hit = cache.get_value_with_status("catalyst", cache_key)
+    if cached is not None:
+        return CatalystAssessment.model_validate(cached)
 
     headlines_text = "\n".join(f"- {h}" for h in news_headlines) if news_headlines else "(no headlines available)"
     user_prompt = (
@@ -102,6 +114,10 @@ def analyze_catalyst(symbol: str, news_headlines: list[str]) -> CatalystAssessme
             "ANALYST %s: type=%s pullback=%s conf=%.2f",
             symbol, assessment.catalyst_type,
             assessment.is_temporary_pullback, assessment.confidence_score,
+        )
+        cache.set_value(
+            "catalyst", cache_key, assessment.model_dump(mode="json"),
+            get_settings().CATALYST_CACHE_MINUTES,
         )
         return assessment
     except Exception as exc:  # noqa: BLE001 - fail closed on any analyst error

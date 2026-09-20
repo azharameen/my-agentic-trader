@@ -18,7 +18,9 @@ from typing import Optional
 
 import feedparser
 
-from app import universe
+from app import cache, universe
+from app.evidence import content_hash
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,10 @@ def _titles_from_feed(feed_url: str, symbol: str, company_name: Optional[str]) -
 
 def fetch_headlines(symbol: str) -> list[str]:
     """Best-effort recent headlines for `symbol` from free market RSS feeds."""
+    cache_key = content_hash({"symbol": symbol.upper(), "feeds": _RSS_FEEDS})
+    cached, _cache_hit = cache.get_value_with_status("news", cache_key)
+    if cached is not None:
+        return list(cached)
     try:
         company_names = universe.get_symbol_company_names()
     except Exception as exc:  # noqa: BLE001 - alias lookup must never block news fetch
@@ -75,4 +81,6 @@ def fetch_headlines(symbol: str) -> list[str]:
         if headline not in seen:
             seen.add(headline)
             deduped.append(headline)
-    return deduped[:_MAX_HEADLINES]
+    result = deduped[:_MAX_HEADLINES]
+    cache.set_value("news", cache_key, result, get_settings().NEWS_CACHE_MINUTES)
+    return result

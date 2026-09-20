@@ -75,6 +75,7 @@ def calculate_risk(
     entry_price: float,
     atr: float,
     portfolio_capital: Optional[float] = None,
+    risk_multiplier: float = 1.0,
 ) -> Optional[TradeProposal]:
     """Build a `TradeProposal` from a technical snapshot, or return `None`.
 
@@ -100,6 +101,8 @@ def calculate_risk(
     """
     settings = get_settings()
     capital = portfolio_capital if portfolio_capital is not None else settings.PORTFOLIO_CAPITAL
+    if not 0.0 <= risk_multiplier <= 1.0:
+        return None
 
     # --- Input sanity ----------------------------------------------------- #
     if entry_price <= 0 or atr <= 0 or capital <= 0:
@@ -133,7 +136,7 @@ def calculate_risk(
         return None
 
     # --- Position sizing (1% risk rule) ----------------------------------- #
-    risk_amount = capital * settings.RISK_PER_TRADE_PCT
+    risk_amount = capital * settings.RISK_PER_TRADE_PCT * risk_multiplier
     quantity = math.floor(risk_amount / risk_per_share)
 
     if quantity <= 0:

@@ -14,6 +14,9 @@ paper trades but must not buy or sell securities automatically.
 - Detect stale, missing, contradictory, or low-confidence data.
 - Learn from paper outcomes without allowing the LLM to rewrite history.
 - Use free/public sources wherever quality is acceptable.
+- Keep the TrAId agentic platform and operator workflow as the primary product
+  focus; preference filters and universe expansion come after the core loop is
+  proven.
 
 ## Non-Goals
 
@@ -24,6 +27,9 @@ paper trades but must not buy or sell securities automatically.
 - Adding cloud infrastructure before local evaluation proves the need.
 - Live broker GTT, OCO, buy, sell, or order-modification automation in the
   current product phase.
+- Domain-specific screening logic such as Shariah, alcohol, tobacco, or other
+  specialty filters unless the operator explicitly provides the rule/list and
+  reviews the source of truth.
 
 ## Users
 
@@ -43,6 +49,15 @@ paper trades but must not buy or sell securities automatically.
 5. Produce a cited research brief with source timestamps and uncertainty.
 6. Apply deterministic risk and exposure gates.
 7. Send a paper proposal to Telegram only when all required gates pass.
+
+### User-supplied preference lists
+
+1. The operator may provide explicit include/exclude lists for symbols,
+   sectors, industries, or other categories.
+2. TrAId should treat those lists as deterministic policy inputs, not LLM
+   inferences.
+3. TrAId should not invent Shariah or specialty screening logic unless a reviewed
+   method and source are explicitly approved later.
 
 ### Read-only portfolio context
 
@@ -115,8 +130,47 @@ system; live broker execution remains excluded.
 - Zero live orders and zero LLM-generated risk numbers.
 - Paper P&L includes delivery transaction costs and reports gross versus net
   results.
-- Extreme India VIX and NIFTY trend conditions can deterministically block new
-  paper proposals before individual-symbol research.
+- When an approved India VIX/NIFTY context assessment is supplied, extreme
+  conditions deterministically block new paper proposals before individual-
+  symbol research. Live index ingestion remains deferred pending source and
+  threshold approval.
+
+## Implemented Foundation
+
+- Multi-provider LLM selection is startup-only and fail-closed.
+- Telegram is restricted to the configured single operator, including approval
+  callbacks.
+- Technical, news, and catalyst artifacts use configurable SQLite TTL caching.
+- Technical and evidence cache reuse are recorded in paper-trade attribution.
+- SQLite audit/checkpoint integrity checks and timestamped backups are available.
+- Evidence freshness and OHLCV shape validation are configurable and tested.
+- Paper outcome evaluation is available through the `evaluate` CLI command and
+  reports metrics without changing strategy or risk configuration.
+- Read-only operational health is available through Telegram `/status`.
+- Paper outcome evaluation is available through the `evaluate` CLI command.
+- Scan timing is measured before any concurrency optimization is enabled.
+
+## Next-Release Scope
+
+TrAId remains NIFTY 100-only for the next release. It uses the official NSE
+Indices NIFTY 100 list with the existing fresh-cache, live-fetch, stale-cache,
+and committed-seed fallback chain. Broader NSE, BSE, all-listed-equity, and
+custom-universe support are deferred until source authority and identity rules
+are reviewed.
+
+## Phase 2 Discussion Gate
+
+Before corporate-event ingestion or broader market-context gates are enabled,
+the operator must agree:
+
+- Approved corporate-event sources and access terms.
+- Source-specific freshness limits.
+- What data is stale for each source class.
+- How conflicts are detected and escalated.
+- Which source has authority when sources disagree.
+
+Implementation can continue around these gates, but it must not invent these
+decisions at runtime.
 
 ## Acceptance Boundary
 

@@ -17,7 +17,7 @@ from typing import Iterable, Optional
 
 import pandas as pd
 
-from app import market_data
+from app import cache, market_data
 from app.strategies import get_setup_strategy
 from config.settings import get_settings
 
@@ -34,7 +34,18 @@ def _to_nse_symbol(symbol: str) -> str:
     yfinance requires the `.NS` suffix for NSE-listed equities.
     """
     symbol = symbol.strip().upper()
+    if symbol.endswith(".NSE"):
+        symbol = symbol[:-4]
     return symbol if symbol.endswith(".NS") else f"{symbol}.NS"
+
+
+def canonical_symbol(symbol: str) -> str:
+    """Return the application symbol without an exchange suffix."""
+    value = symbol.strip().upper()
+    for suffix in (".NSE", ".NS"):
+        if value.endswith(suffix):
+            return value[: -len(suffix)]
+    return value
 
 
 def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -106,6 +117,16 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
     `volume`, `avg_volume_20`, `qualifies`, or `None` if no data is available.
     """
     settings = get_settings()
+    cache_key = str({
+        "symbol": canonical_symbol(symbol),
+        "history_period": settings.HISTORY_PERIOD,
+        "strategy": settings.SETUP_STRATEGY,
+        "rsi_max": settings.RSI_OVERSOLD_MAX,
+        "volume_ratio_min": settings.VOLUME_RATIO_MIN,
+    })
+    cached, cache_hit = cache.get_value_with_status("technical", cache_key)
+    if cached is not None:
+        return {**cached, "cache_hit": cache_hit}
     nse_symbol = _to_nse_symbol(symbol)
     try:
         result = _load_history(nse_symbol, settings.HISTORY_PERIOD)
@@ -115,8 +136,8 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
 
     df = _compute_indicators(result.frame)
     latest = df.iloc[-1]
-    return {
-        "symbol": symbol.strip().upper(),
+    snapshot = {
+        "symbol": canonical_symbol(symbol),
         "daily_close": float(latest["close"]),
         "rsi": float(latest["rsi_14"]),
         "ema_200": float(latest["ema_200"]),
@@ -126,7 +147,10 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
         "qualifies": bool(_passes_setup_filter(latest)),
         "data_source": result.source,
         "data_fetched_at": result.fetched_at.isoformat(),
+        "cache_hit": False,
     }
+    cache.set_value("technical", cache_key, snapshot, settings.TECHNICAL_CACHE_MINUTES)
+    return snapshot
 
 
 def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
@@ -156,35 +180,16 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
     results: list[dict] = []
 
     def _screen_one(raw_symbol: str) -> Optional[dict]:
-        nse_symbol = _to_nse_symbol(raw_symbol)
-        try:
-            result = _load_history(nse_symbol, settings.HISTORY_PERIOD)
-        except Exception as exc:  # noqa: BLE001 - network errors are expected
-            logger.warning("Failed to download %s: %s", nse_symbol, exc)
-            return None
-
-        df = _compute_indicators(result.frame)
-        latest = df.iloc[-1]
-
-        if not _passes_setup_filter(latest):
+        snapshot = get_symbol_snapshot(raw_symbol)
+        if snapshot is None or not snapshot["qualifies"]:
             logger.debug("Symbol %s did not pass the setup filter.", raw_symbol)
             return None
 
         logger.info(
             "SETUP QUALIFIED: %s close=%.2f rsi=%.1f ema200=%.2f atr=%.2f",
-            raw_symbol, latest["close"], latest["rsi_14"], latest["ema_200"], latest["atr_14"],
+            raw_symbol, snapshot["daily_close"], snapshot["rsi"], snapshot["ema_200"], snapshot["atr"],
         )
-        return {
-            "symbol": raw_symbol.strip().upper(),
-            "daily_close": float(latest["close"]),
-            "rsi": float(latest["rsi_14"]),
-            "ema_200": float(latest["ema_200"]),
-            "atr": float(latest["atr_14"]),
-            "volume": float(latest["volume"]),
-            "avg_volume_20": float(latest["avg_volume_20"]),
-            "data_source": result.source,
-            "data_fetched_at": result.fetched_at.isoformat(),
-        }
+        return snapshot
 
     with ThreadPoolExecutor(max_workers=settings.SCREENER_MAX_WORKERS) as pool:
         futures = {pool.submit(_screen_one, symbol): symbol for symbol in symbols}

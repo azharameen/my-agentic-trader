@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 import threading
-from typing import Optional
+from typing import Any, Optional
 
-from app import executor, observability, pipeline, telegram_bot, universe
+from app import evaluation, executor, maintenance, observability, pipeline, telegram_bot, universe
 from config.settings import get_settings
 
 logging.basicConfig(
@@ -38,11 +39,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("main")
 
 
-def _start_telegram_in_background() -> None:
+def _start_telegram_in_background() -> threading.Thread:
     """Run the blocking Telegram bot on a daemon thread."""
     thread = threading.Thread(target=telegram_bot.start_bot, name="telegram-bot", daemon=True)
     thread.start()
     logger.info("Telegram bot thread started.")
+    return thread
 
 
 def cmd_scan(_args: argparse.Namespace) -> None:
@@ -62,6 +64,33 @@ def cmd_refresh_universe(_args: argparse.Namespace) -> None:
     delta = universe.diff_universe(old, new)
     logger.info("Universe refreshed: %d symbols. Added=%s Removed=%s",
                 len(new), delta["added"], delta["removed"])
+
+
+def cmd_check_databases(_args: argparse.Namespace) -> None:
+    logger.info("Database integrity: %s", maintenance.check_databases())
+
+
+def cmd_backup_databases(_args: argparse.Namespace) -> None:
+    logger.info("Database backups created: %s", maintenance.backup_databases())
+
+
+def cmd_evaluate(_args: argparse.Namespace) -> None:
+    logger.info("Paper evaluation: %s", evaluation.summarize_trades(executor.fetch_all_trades()))
+
+
+def cmd_history(args: argparse.Namespace) -> None:
+    """Print the full LangGraph checkpoint (time-travel) history for a symbol."""
+    from app import graph
+
+    history = graph.symbol_history(args.symbol.upper())
+    if not history:
+        logger.info("No pipeline run recorded for %s yet.", args.symbol.upper())
+        return
+    for step in reversed(history):
+        logger.info(
+            "step=%s next=%s paused_for_approval=%s values=%s",
+            step["created_at"], step["next"], step["paused_for_approval"], step["values"],
+        )
 
 
 def _scheduled_scan() -> None:
@@ -90,35 +119,58 @@ def _scheduled_universe_refresh() -> None:
         logger.exception("Scheduled universe refresh failed.")
 
 
-def _start_scheduler() -> None:
+def _start_scheduler() -> Any:
     """Wire the daily EOD scan and the monthly universe refresh into apscheduler."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
     settings = get_settings()
-    scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
+    scheduler = BackgroundScheduler(timezone=settings.SCHEDULER_TIMEZONE)
     scheduler.add_job(
         _scheduled_scan, "cron",
         hour=settings.SCAN_CRON_HOUR, minute=settings.SCAN_CRON_MINUTE,
-        day_of_week="mon-fri", id="daily_scan",
+        day_of_week=settings.SCAN_CRON_DAYS, id="daily_scan",
     )
     scheduler.add_job(
         _scheduled_universe_refresh, "cron",
-        day=1, hour=6, minute=0, id="monthly_universe_refresh",
+        day=int(settings.UNIVERSE_REFRESH_DAY_OF_MONTH), hour=int(settings.UNIVERSE_REFRESH_HOUR),
+        minute=int(settings.UNIVERSE_REFRESH_MINUTE), id="monthly_universe_refresh",
     )
     scheduler.start()
-    logger.info("Scheduler started: daily scan at %02d:%02d IST (Mon-Fri), monthly universe refresh on day 1.",
-                settings.SCAN_CRON_HOUR, settings.SCAN_CRON_MINUTE)
+    logger.info("Scheduler started: daily scan at %02d:%02d %s (%s), monthly universe refresh on day %s at %02d:%02d %s.",
+                settings.SCAN_CRON_HOUR, settings.SCAN_CRON_MINUTE,
+                settings.SCHEDULER_TIMEZONE, settings.SCAN_CRON_DAYS,
+                settings.UNIVERSE_REFRESH_DAY_OF_MONTH,
+                int(settings.UNIVERSE_REFRESH_HOUR), int(settings.UNIVERSE_REFRESH_MINUTE),
+                settings.SCHEDULER_TIMEZONE)
+    return scheduler
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
     """Start the daily scheduler and the Telegram bot (long-running)."""
-    _start_telegram_in_background()
-    _start_scheduler()
-    # Keep the process alive so the Telegram bot keeps polling.
+    bot_thread = _start_telegram_in_background()
+    scheduler = _start_scheduler()
+    shutdown = threading.Event()
+
+    def request_shutdown(signum: int, _frame: object) -> None:
+        logger.info("Shutdown requested by signal %s.", signum)
+        shutdown.set()
+
+    previous_sigint = signal.signal(signal.SIGINT, request_shutdown)
+    previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
     try:
-        threading.Event().wait()
+        while not shutdown.wait(timeout=1):
+            pass
     except KeyboardInterrupt:
-        logger.info("Shutting down.")
+        shutdown.set()
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        logger.info("Shutting down services...")
+        scheduler.shutdown(wait=False)
+        telegram_bot.stop_bot()
+        if bot_thread.is_alive():
+            bot_thread.join(timeout=10)
+        logger.info("Shutdown complete.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -129,6 +181,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
     sub.add_parser("serve", help="Start scheduler + Telegram bot")
     sub.add_parser("refresh-universe", help="Force a live refresh of the NIFTY 100 universe")
+    sub.add_parser("check-databases", help="Check local SQLite database integrity")
+    sub.add_parser("backup-databases", help="Back up local SQLite databases")
+    sub.add_parser("evaluate", help="Evaluate paper-trade outcomes")
+    history_p = sub.add_parser("history", help="Show full checkpoint history for one symbol (time travel)")
+    history_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
     return parser
 
 
@@ -153,6 +210,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         cmd_serve(args)
     elif args.command == "refresh-universe":
         cmd_refresh_universe(args)
+    elif args.command == "check-databases":
+        cmd_check_databases(args)
+    elif args.command == "backup-databases":
+        cmd_backup_databases(args)
+    elif args.command == "evaluate":
+        cmd_evaluate(args)
+    elif args.command == "history":
+        cmd_history(args)
     return 0
 
 

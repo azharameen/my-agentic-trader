@@ -1,8 +1,8 @@
 """
 Conversational research agent.
 
-A small LangGraph ReAct agent (``create_react_agent``) that answers free-text
-questions from the operator over Telegram. It is **read/trigger-only**:
+A small LangChain agent (``create_agent``) that answers free-text questions
+from the operator over Telegram. It is **read/trigger-only**:
 
 * It can inspect technical snapshots, audit-log trades, and paused proposal
   threads, and it can *trigger* the pipeline for a symbol.
@@ -11,22 +11,38 @@ questions from the operator over Telegram. It is **read/trigger-only**:
 * It never emits prices, sizes, or orders of its own; every number it reports
   comes from the deterministic screener / risk / audit layers.
 
-The agent reuses the same OpenAI-compatible endpoint configured for the
-catalyst analyst (``OPENAI_API_KEY`` / ``OPENAI_BASE_URL`` / ``OPENAI_MODEL``).
+The agent reuses the same provider selected for the catalyst analyst through
+``LLM_PROVIDER`` and its provider-specific credentials/model settings.
+
+Safety middleware (all built into the already-installed ``langchain`` package,
+no new dependency — see ADR-020):
+
+* ``PIIMiddleware`` redacts/masks emails and credit-card numbers the operator
+  might paste into chat before they reach the LLM or logs.
+* ``ToolCallLimitMiddleware`` caps tool calls per run so a confused model
+  cannot loop indefinitely (e.g. repeatedly re-triggering ``run_symbol``).
+* ``SummarizationMiddleware`` bounds conversation memory by condensing older
+  turns once the thread grows past a token budget, closing the T-015 "bounded
+  memory/summary policy" checklist item without inventing a custom summarizer.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    PIIMiddleware,
+    SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.prebuilt import create_react_agent
 
-from app import checkpoint, executor, graph, pipeline, screener
-from app.llm import build_chat_openai
-from config.settings import get_settings
+from app import checkpoint, executor, graph, pipeline, screener, store
+from app.llm import build_chat_model, is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +59,10 @@ You have tools to:
 - run_symbol(symbol): run the symbol through the full pipeline (screener ->
   LLM catalyst analysis -> risk). If it qualifies, a proposal card is pushed
   to the operator's Telegram for approval. This can take a minute or two.
+- get_symbol_history(symbol): the full step-by-step decision trail for the
+  symbol's most recent run (every node transition and why it stopped). Use
+  this when the operator asks "why was X rejected/approved" instead of
+  guessing.
 
 Rules:
 1. You are READ/trigger-only. You can NEVER approve, reject, or kill a
@@ -113,26 +133,48 @@ def run_symbol(symbol: str) -> str:
     return f"{symbol.upper()} finished: {details}"
 
 
+def get_symbol_history(symbol: str) -> str:
+    """Full step-by-step checkpoint history for a symbol's most recent run.
+
+    Read-only time-travel over LangGraph checkpoints: shows every node
+    transition, whether it paused for human approval, and the state at each
+    step, so the operator can ask "why did X get rejected/approved" without
+    re-running the pipeline.
+    """
+    history = graph.symbol_history(symbol.upper())
+    if not history:
+        return f"No pipeline run recorded for {symbol.upper()} yet."
+    return json.dumps(history, indent=2, default=str)
+
+
 def _get_checkpointer() -> SqliteSaver:
     """Return the shared long-lived checkpointer."""
     return checkpoint.get_checkpointer()
 
 
-def _build_agent():
-    """Build the ReAct agent from the configured OpenAI-compatible endpoint."""
-    llm = build_chat_openai()
-    return create_react_agent(
+def _build_agent() -> Any:
+    """Build the LangChain agent from the configured provider, with safety middleware."""
+    llm = build_chat_model()
+    middleware: list[AgentMiddleware[Any, Any]] = [
+        PIIMiddleware("email", strategy="redact", apply_to_input=True),
+        PIIMiddleware("credit_card", strategy="mask", apply_to_input=True),
+        ToolCallLimitMiddleware(run_limit=8, exit_behavior="end"),
+        SummarizationMiddleware(model=llm, trigger=[("tokens", 4000)], keep=("messages", 20)),
+    ]
+    return create_agent(
         llm,
-        [get_symbol_snapshot, list_trades, get_thread_status, run_symbol],
-        prompt=_SYSTEM_PROMPT,
+        [get_symbol_snapshot, list_trades, get_thread_status, run_symbol, get_symbol_history],
+        system_prompt=_SYSTEM_PROMPT,
         checkpointer=_get_checkpointer(),
+        store=store.get_store(),
+        middleware=middleware,
     )
 
 
 _agent = None
 
 
-def _get_agent():
+def _get_agent() -> Any:
     """Lazily build (and cache) the agent."""
     global _agent
     if _agent is None:
@@ -146,9 +188,8 @@ def ask(question: str, thread_id: Optional[str] = None) -> str:
     Blocking — call from a worker thread, never the bot's event loop.
     Returns the agent's final text answer.
     """
-    settings = get_settings()
-    if not settings.OPENAI_API_KEY:
-        return "⚠️ LLM not configured (OPENAI_API_KEY missing); chat agent unavailable."
+    if not is_configured():
+        return "⚠️ Configured LLM provider is unavailable; chat agent unavailable."
 
     try:
         agent = _get_agent()

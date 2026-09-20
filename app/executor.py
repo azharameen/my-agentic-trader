@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS trade_audit_log (
     market_regime   TEXT,
     catalyst_type   TEXT,
     source_set      TEXT,
+    llm_provider    TEXT,
+    llm_model       TEXT,
+    cache_hits      TEXT,
     mistake_category TEXT
 );
 """
@@ -95,9 +98,14 @@ def init_db() -> None:
     _ensure_column(conn, "market_regime", "TEXT")
     _ensure_column(conn, "catalyst_type", "TEXT")
     _ensure_column(conn, "source_set", "TEXT")
+    _ensure_column(conn, "llm_provider", "TEXT")
+    _ensure_column(conn, "llm_model", "TEXT")
+    _ensure_column(conn, "cache_hits", "TEXT")
     from app import outbox
 
     outbox.init_db()
+    from app import cache
+    cache.init_db()
     from app import evidence
     evidence.init_db()
     logger.info("Audit database ready at %s", path)
@@ -135,6 +143,9 @@ def record_open_trade(
     market_regime: Optional[str] = None,
     catalyst_type: Optional[str] = None,
     source_set: Optional[list[str]] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    cache_hits: Optional[list[str]] = None,
 ) -> dict:
     """Simulate a paper fill and persist an OPEN_PAPER trade row.
 
@@ -159,8 +170,9 @@ def record_open_trade(
                 trade_id, timestamp, symbol, entry_price, soft_stop, hard_stop,
                 target_price, quantity, rsi, ema_200, atr, thesis, headlines_used,
                 human_decision, fill_price, status
-                , evidence_snapshot_id, strategy_name, market_regime, catalyst_type, source_set
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                , evidence_snapshot_id, strategy_name, market_regime, catalyst_type, source_set,
+                llm_provider, llm_model, cache_hits
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 trade_id,
@@ -184,6 +196,9 @@ def record_open_trade(
                 market_regime,
                 catalyst_type,
                 json.dumps(source_set or []),
+                llm_provider,
+                llm_model,
+                json.dumps(cache_hits or []),
             ),
         )
         conn.commit()
