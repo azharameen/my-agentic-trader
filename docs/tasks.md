@@ -16,10 +16,11 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 - **Phase 1: Safe Runtime Foundation (Completed):** T-015 (Telegram control & memory), T-018 (artifact reuse & caching), T-017 (local storage integrity).
 - **Phase 2: Evidence Quality Foundation (Partially Unblocked):** T-004 (market regime gates, unblocked via ADR-011), T-002 (deferred), T-003 (deferred).
-- **Phase 3: Multi-Agent Qualitative Research (Active Blueprint):** T-029 (sequential multi-agent research subgraph with early exit, ADR-022).
-- **Phase 4: Evaluation & Performance Operations (Active):** T-007 (NIFTY 100 Buy-and-Hold benchmark comparator, 30-trade minimum sample size).
-- **Phase 5: LangGraph Platform Modernization (Completed Foundation):** T-023 (store, durability, time travel), T-024 (agent middleware), T-025 (LangSmith tracing).
-- **Phase 6: Multi-Strategy, Multi-Agent & PostgreSQL Evolution (Active):** T-026 (PostgreSQL sidecar & migration), T-027 (type safety & SecretStr), T-028 (multi-strategy screening), T-030 (concurrency hardening), T-031 (walk-forward backtester).
+- **Phase 3: Multi-Agent Qualitative Research (Completed):** T-029 (sequential multi-agent research subgraph with early exit, ADR-022).
+- **Phase 4: Evaluation & Performance Operations (Completed):** T-007 (NIFTY 100 Buy-and-Hold benchmark comparator, 30-trade minimum sample size).
+- **Phase 5: LangGraph Platform Modernization (Completed):** T-023 (store, durability, time travel), T-024 (agent middleware), T-025 (LangSmith tracing).
+- **Phase 6: Multi-Strategy, Multi-Agent & PostgreSQL Evolution (Completed):** T-026 (PostgreSQL sidecar & migration), T-027 (type safety & SecretStr), T-028 (multi-strategy screening), T-030 (concurrency hardening), T-031 (walk-forward backtester), T-033 (documentation consolidation).
+- **Phase 7: Telegram Usability & Visual Analytics (Active):** T-034 (Telegram usability suite), T-035 (incremental OHLCV caching), T-036 (React visual analytics web dashboard).
 
 ---
 
@@ -27,6 +28,10 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
+| **T-034** | `todo` | High | ADR-026 | Telegram Usability Suite: `[🔬 Agent Debate]` button, `/positions` command, Daily Scan Digest |
+| **T-035** | `todo` | High | ADR-026 | Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb errors |
+| **T-036** | `backlog` | Medium | ADR-025 | Phase 7: Optional React Visual Analytics Web Dashboard (FastAPI + React + Lightweight Charts) |
+| **T-033** | `done` | High | ADR-001 | Canonical documentation synchronicity, baseline consolidation, and ADR updates |
 | **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
 | **T-007** | `done` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
@@ -55,19 +60,57 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active implementation tasks. All Phase 6 development tasks completed.)*
+*(Currently 0 active implementation tasks. Ready to begin T-034.)*
 
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
 
-*(Currently 0 tasks in todo.)*
+### T-034 Telegram Usability Suite: Debate Callback, `/positions`, and Daily Scan Digest
+- Status: `todo`
+- Priority: `High`
+- Related ADRs: [ADR-026](architecture-decisions.md#adr-026-telegram-usability-suite--incremental-market-data-caching)
+- Nested Hierarchy:
+  - **Sub-Task 1: Interactive Agent Debate Inline Button**
+    - Milestone 1.1: Add `[🔬 Agent Debate]` inline callback button to proposal card in `app/telegram_bot.py`.
+    - Milestone 1.2: Handle `debate_{symbol}` callback query to fetch research verdict snapshot and format structured Bear objections vs Bull thesis.
+  - **Sub-Task 2: Active Position Tracker (`/positions`)**
+    - Milestone 2.1: Query open trades from PostgreSQL `trade_audit_log` with current market price and unrealized P&L (₹ / %).
+    - Milestone 2.2: Compute portfolio heat % (sum of risk amounts / total capital) and render clean Markdown scorecard.
+  - **Sub-Task 3: Automated Daily Scan Digest**
+    - Milestone 3.1: Capture macro regime, total screened, technical qualifiers, agent veto breakdown, and proposal list in `pipeline.py`.
+    - Milestone 3.2: Format and push single daily summary message to Telegram at 15:47 IST immediately following universe scan.
+  - Checklists:
+    - [ ] `[🔬 Agent Debate]` button tested and verified
+    - [ ] `/positions` command tested with open, closed, and empty trade states
+    - [ ] Daily Scan Digest tested with positive, negative, and macro-vetoed scans
+    - [ ] 100% pytest suite pass rate
+
+### T-035 Incremental PostgreSQL OHLCV Caching & Market Data Resilience
+- Status: `todo`
+- Priority: `High`
+- Related ADRs: [ADR-026](architecture-decisions.md#adr-026-telegram-usability-suite--incremental-market-data-caching)
+- Nested Hierarchy:
+  - **Sub-Task 1: Relational OHLCV Schema & DDL**
+    - Milestone 1.1: Create `ohlcv_daily_bars` table in `app/db.py` indexed on `(symbol, timestamp)` with unique constraint.
+  - **Sub-Task 2: Incremental Bar Loader & Merger**
+    - Milestone 2.1: Refactor `app/market_data.py` to check latest stored date for symbol and fetch only missing delta bars from yfinance.
+    - Milestone 2.2: Merge cached history with delta bars to construct full 200+ day DataFrame with zero network overhead for historical data.
+  - Checklists:
+    - [ ] DDL and migration verified in PostgreSQL
+    - [ ] Incremental update verified against cold and warm caches
+    - [ ] Yahoo Finance crumb error rate reduced to zero
+    - [ ] 100% pytest suite pass rate
 
 ---
 
 ## 5. Backlog Tasks (`backlog`)
 
-*(All current Phase 6 tasks are completed.)*
+### T-036 Phase 7: Visual Analytics React Web Dashboard
+- Status: `backlog`
+- Priority: `Medium`
+- Related ADRs: [ADR-025](architecture-decisions.md#adr-025-hybrid-control-plane-telegram-primary--phase-7-react-analytics)
+- Description: Read-only visual web dashboard (FastAPI backend + React / Vite / Tailwind / Lightweight Charts) querying PostgreSQL `trade_audit_log`, `research_cache`, and backtest runs.
 
 ---
 
@@ -77,39 +120,26 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - Status: `discuss`
 - Priority: `Low`
 - Goal: Determine whether a 15-minute polling position monitor during market hours is beneficial for swing trading.
-- Open Discussion Questions:
-  1. Does a 15-minute EOD trailing stop check provide tangible risk reduction for swing trades held across multiple days?
-  2. Does polling Yahoo Finance intraday introduce rate-limiting or stale price risks?
-  3. Decision gate: Requires an ADR before any intraday polling scheduler is introduced.
 
 ---
 
 ## 7. Tasks Under Review (`inreview`)
 
-### T-023 LangGraph Platform Modernization
-- Status: `inreview`
-- Priority: `High`
-- Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
-- Completed Milestones:
-  - [x] Shared long-term memory store (`compile(store=...)`) backing `app.profile`
-  - [x] Set `durability="sync"` explicitly on `run_symbol` and `resume_symbol`
-  - [x] Time-travel history exposed via `graph.symbol_history`, `history` CLI, and chat-agent tool
-  - [x] Unit and regression tests passing
-
-### T-024 LangChain Agent Middleware Modernization
-- Status: `inreview`
-- Priority: `High`
-- Related ADRs: [ADR-020](architecture-decisions.md#adr-020-chat-agent-adopts-create_agent-and-built-in-safety-middleware)
-- Completed Milestones:
-  - [x] Migrated from deprecated `create_react_agent` to `langchain.agents.create_agent`
-  - [x] `PIIMiddleware` for email and credit card masking
-  - [x] `ToolCallLimitMiddleware` (max 8 calls per run)
-  - [x] `SummarizationMiddleware` for bounded conversation memory
-  - [x] Unit and regression tests passing
+*(Currently 0 tasks in review. T-023 and T-024 completed.)*
 
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-033 Documentation Synchronicity & Baseline Consolidation
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-001](architecture-decisions.md#adr-001-documentation-is-canonical), [ADR-025](architecture-decisions.md#adr-025-hybrid-control-plane-telegram-primary--phase-7-react-analytics), [ADR-026](architecture-decisions.md#adr-026-telegram-usability-suite--incremental-market-data-caching)
+- Completed Milestones:
+  - [x] Synchronized `docs/architecture.md`, `docs/prd.md`, `docs/reference.md`, `docs/tasks.md`
+  - [x] Established Phase 6 completed capabilities as canonical architecture
+  - [x] Formulated ADR-025 (Hybrid UI) and ADR-026 (Telegram Usability Suite & Incremental OHLCV Cache)
+  - [x] Structured T-034, T-035, T-036 task hierarchies
 
 ### T-031 Walk-Forward Backtesting Framework
 - Status: `done`

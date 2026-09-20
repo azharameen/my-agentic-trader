@@ -116,11 +116,26 @@ analytics, attribution, and regression datasets.
 
 CI and lifecycle hardening, reducer-safe graph state, PostgreSQL unified
 persistence sidecar (ADR-023), automated Yahoo Finance market-regime macro
-gates (`^NSEI` and `^INDIAVIX`, ADR-011), sequential multi-agent research
-subgraph with early exit (Bear Risk Critic -> Bull Momentum -> Synthesis Arbiter,
-ADR-022), multi-strategy simultaneous screening (`BREAKOUT`, `PULLBACK`,
-`MEAN_REVERSION`, ADR-024), and realistic paper transaction-cost accounting. Live
-broker execution remains strictly excluded (ADR-002).
+gates (`^NSEI` and `^INDIAVIX`, ADR-011), and realistic paper transaction-cost
+accounting.
+
+### Phase 6: Multi-Strategy, Multi-Agent & Backtesting Engine (Completed)
+
+Multi-strategy simultaneous screening (`BREAKOUT`, `PULLBACK`, `MEAN_REVERSION`,
+ADR-024), sequential multi-agent qualitative research subgraph with early exit
+(Bear Risk Critic $\rightarrow$ Bull Momentum $\rightarrow$ Synthesis Arbiter,
+ADR-022), domain model type safety and `SecretStr` credential masking (ADR-001,
+ADR-003), bounded thread pools and tenacity retry engine (ADR-019), and event-driven
+walk-forward backtesting framework (ADR-012).
+
+### Phase 7: Operational Usability Suite & Visual Web Dashboard (Active Roadmap)
+
+Telegram Usability Suite (`[🔬 Agent Debate]` on-demand breakdown, dedicated `/positions`
+command with portfolio capital heat tracking, automated 15:47 IST Daily Scan Digest,
+ADR-026), Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb
+rate-limit anomalies, and an optional read-only React Web Analytics Dashboard
+(FastAPI backend + React + Lightweight Charts) for interactive equity curves and
+backtest exploration (ADR-025). Live broker execution remains strictly excluded (ADR-002).
 
 ## Success Metrics
 

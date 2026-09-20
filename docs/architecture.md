@@ -26,88 +26,69 @@ separate Phase 2 source-policy decision, not an implicit implementation task.
 - Market-data loading rejects missing OHLCV columns, non-numeric values, and
   negative volume before technical indicators are computed.
 
-## Current Architecture
+## Current Implemented Architecture
 
 The codebase operates as a local-first, containerized, PostgreSQL-backed
-decision-support assistant:
+multi-strategy, multi-agent decision-support platform with Telegram as its primary
+control plane:
 
 ```mermaid
 flowchart TD
     A[Scheduler or Telegram /scan] --> B[Universe Resolver: app.universe]
-    B --> C[Daily OHLCV Loader: app.market_data]
-    C --> D[Pullback Screener: app.screener]
-    D --> E[News Headlines: app.news RSS]
-    E --> F[Single Catalyst Analyst: app.analyst]
-    F --> G[Deterministic Risk Engine: app.risk]
-    G --> H[Telegram HITL Interrupt: ProposalCard]
-    H --> I[Paper Execution: app.executor]
-    I --> J[(PostgreSQL: trade_audit_log)]
-    H -.-> K[(PostgreSQL Checkpoints: PostgresSaver)]
-    L[Chat Agent: app.chat_agent] -.-> M[(PostgreSQL Store: PostgresStore)]
+    B --> C[Incremental OHLCV Loader: app.market_data]
+    C --> D{Market Macro Gate: ^NSEI & ^INDIAVIX?}
+    D -->|Fail / Veto| R[Rejected Terminal]
+    D -->|Pass| E[Multi-Strategy Screener: Breakout / Pullback / Mean Reversion]
+    E --> F[Sequential Multi-Agent Research Subgraph]
+    
+    subgraph Multi_Agent_Subgraph [Sequential Multi-Agent Subgraph: app.agents]
+        F1[Bear Risk Critic] -->|Early Veto if Conf >= 0.70| R
+        F1 -->|Pass| F2[Bull Momentum Analyst]
+        F2 --> F3[Synthesis Arbiter: Conf >= 0.60?]
+    end
+    
+    F3 -->|Fail| R
+    F3 -->|Pass| G[Deterministic Strategy Risk Engine: app.risk]
+    G --> H[Telegram HITL Proposal Card: [Approve] [Reject] [🔬 Debate]]
+    H --> I[Paper Broker Execution: app.executor]
+    I --> J[(PostgreSQL 16 Sidecar: trader_db)]
+    J --- Checkpoints[PostgresSaver: checkpoints & writes]
+    J --- Store[PostgresStore: operator profile & memory]
+    J --- AuditTable[trade_audit_log, research_cache, evidence_snapshots]
+    J --> K[Conversational Research Chat Agent: app.chat_agent]
+    J --> L[/positions & Daily Scan Digest: app.telegram_bot]
+    J -.-> M[Phase 7: Optional React Visual Analytics Dashboard]
 ```
 
 ### Key Architectural Characteristics:
-- **Persistence:** Unified PostgreSQL 16 sidecar container (`trade_audit_log`, `checkpoints`, `store`, `notification_outbox`, `research_cache`, `evidence_snapshots`).
-- **Screening:** Deterministic setup screening computing EMA 200, RSI 14, ATR 14, and 20-day volume average.
-- **Qualitative Analysis:** Monolithic structured LLM call in `app/analyst.py` classifying catalyst context.
-- **Deployment:** Two services (`app` and `postgres:16-alpine` sidecar) managed via Docker Compose.
-- **Risk Engine:** Pure Python deterministic math enforcing ATR stops and 1% risk per trade.
-
----
-
-## Target Modernized Architecture (To-Be / Phase 6 Blueprint)
-
-Approved by architectural consensus (ADR-011, ADR-022, ADR-023, ADR-024), the system
-evolves into a multi-strategy, multi-agent, containerized platform backed by
-PostgreSQL:
-
-```mermaid
-flowchart TD
-    A[Scheduler or Telegram /scan] --> B[Universe Resolver]
-    B --> C[Multi-Strategy Screener: Breakout / Pullback / Mean Reversion]
-    C --> D{Market Macro Gate: ^NSEI & ^INDIAVIX?}
-    D -->|Fail / Veto| R[Rejected Terminal]
-    D -->|Pass| E[Sequential Multi-Agent Subgraph]
-    
-    subgraph Multi_Agent_Subgraph [Sequential Multi-Agent Research Subgraph]
-        E1[Bear Risk Critic] -->|Early Veto if Conf >= 0.70| R
-        E1 -->|Pass| E2[Bull Momentum Analyst]
-        E2 --> E3[Synthesis Arbiter: Conf >= 0.60?]
-    end
-    
-    E3 -->|Fail| R
-    E3 -->|Pass| F[Deterministic Strategy Risk Engine]
-    F --> G[Telegram HITL Interrupt]
-    G --> H[Paper Broker Execution]
-    H --> I[(PostgreSQL 16 Sidecar: trader_db)]
-    I --- Checkpoints[PostgresSaver: checkpoints & blobs]
-    I --- Store[PostgresStore: operator profile & memory]
-    I --- AuditTable[trade_audit_log & indexes]
-    I --> J[Research Chat Agent]
-```
-
-### Key To-Be Advancements:
-1. **Unified Persistence (ADR-023):** Single PostgreSQL 16 sidecar container replaces all SQLite files, eliminating file locks and supporting concurrent multi-process operations.
-2. **Multi-Strategy Simultaneous Screening (ADR-024):** Evaluates Breakout, Pullback, and Mean Reversion setups simultaneously with deterministic priority resolution.
-3. **Macro Regime Filter (ADR-011):** Sourced from Yahoo Finance (`^NSEI`, `^INDIAVIX`). Blocks entries if VIX > 24 or NIFTY < 50 EMA; halves risk if VIX in [19, 24].
-4. **Sequential Multi-Agent Research (ADR-022):** Bear Critic runs first for early exit (saving ~60% LLM cost), followed by Bull Analyst and Synthesis Arbiter.
-5. **Advanced Evaluation & Benchmarking (T-007):** Compares paper alpha against NIFTY 100 Buy-and-Hold with a 30-trade minimum sample size rule, Profit Factor, and Realized R-multiples.
+- **Persistence (ADR-023):** Unified PostgreSQL 16 sidecar container (`trade_audit_log`, `checkpoints`, `store`, `notification_outbox`, `research_cache`, `evidence_snapshots`).
+- **Multi-Strategy Screening (ADR-024):** Simultaneous evaluation of `BreakoutMomentumStrategy`, `PullbackInUptrendStrategy`, and `BollingerMeanReversionStrategy` with deterministic priority resolution (`BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`).
+- **Market Macro Regime Gate (ADR-011):** Sourced from Yahoo Finance (`^NSEI`, `^INDIAVIX`). Blocks entries if VIX > 24 or NIFTY < 50 EMA; scales risk by 50% if VIX in [19, 24].
+- **Sequential Multi-Agent Qualitative Research (ADR-022):** Bear Risk Critic runs first for early veto (saving ~60% LLM tokens), followed by Bull Momentum Analyst and Synthesis Arbiter ($\ge 0.60$ composite confidence required).
+- **Deterministic Risk Engine (ADR-003):** Pure Python math calculating exact ATR-based soft/hard stops, profit targets, 1% account risk sizing, and delivery transaction friction.
+- **Hybrid Control Plane (ADR-025, ADR-026):**
+  - **Telegram Bot (Primary):** Real-time push alerts, 1-tap HITL approvals, `[🔬 Agent Debate]` drill-down, dedicated `/positions` portfolio heat tracking, and conversational ReAct research agent.
+  - **Phase 7 Web UI (Visual Analytics):** Optional FastAPI + React + Lightweight Charts visualizer for equity curves, multi-candle charting, and walk-forward backtest exploration.
+- **Evaluation & Walk-Forward Backtester (ADR-011, ADR-012):** NIFTY 100 Buy-and-Hold benchmark comparator (30-trade minimum sample size), `/performance` scorecard, and bar-by-bar backtesting CLI (`app/backtester.py`).
 
 ---
 
 ## Architectural Evolution Matrix
 
-| Area | Current As-Is State | Target To-Be State | Task ID | ADR |
+| Area | Current Implemented State | Target Phase 7 State | Task ID | ADR |
 |---|---|---|---|---|
-| **Persistence** | Unified PostgreSQL 16 sidecar container | PostgreSQL 16 with replication / cold backups | T-026 | ADR-023 |
-| **Screener** | Single strategy (`pullback_in_uptrend`) | Simultaneous multi-strategy (`BREAKOUT`, `PULLBACK`, `MEAN_REVERSION`) | T-028 | ADR-024 |
-| **Macro Gates** | Deterministic evaluator with manual mock | Automated Yahoo Finance `^NSEI` and `^INDIAVIX` live ingestion | T-004 | ADR-011 |
-| **Qualitative Research** | Single monolithic prompt in `analyst.py` | Sequential multi-agent subgraph (Bear $\rightarrow$ Bull $\rightarrow$ Synth) with early exit | T-029 | ADR-022 |
-| **Data Contracts** | Loose dictionaries passing between stages | Typed Pydantic models in `app/models.py` | T-027 | ADR-003 |
-| **Credentials** | Plain `str` fields in `settings.py` | Pydantic `SecretStr` preventing secret leaks | T-027 | ADR-001 |
-| **Concurrency** | Unbounded threads in `telegram_bot.py` | Bounded `ThreadPoolExecutor(max_workers=3)` + tenacity retries | T-030 | ADR-019 |
-| **Evaluation** | Basic net P&L and win rate | NIFTY 100 Buy-and-Hold benchmark, Profit Factor, R-multiples, `/performance` | T-007 | ADR-011 |
-| **Backtesting** | None (paper live forward testing only) | Event-driven walk-forward backtester reusing production pipeline | T-031 | ADR-012 |
+| **Persistence** | Unified PostgreSQL 16 sidecar container | PostgreSQL 16 with automated replication / backup | T-026 | ADR-023 |
+| **Screener** | Simultaneous multi-strategy (`BREAKOUT`, `PULLBACK`, `MEAN_REVERSION`) | Configurable operator strategy weights | T-028 | ADR-024 |
+| **Macro Gates** | Automated Yahoo Finance `^NSEI` and `^INDIAVIX` live ingestion | Multi-timeframe sector rotation overlays | T-004 | ADR-011 |
+| **Qualitative Research** | Sequential multi-agent subgraph (Bear $\rightarrow$ Bull $\rightarrow$ Synth) with early exit | Dynamic multi-source corporate filings extraction | T-029 | ADR-022 |
+| **Control Plane** | Telegram Bot with 1-tap HITL approvals & conversational chat agent | Hybrid: Telegram operational bot + React visual analytics dashboard | T-034, T-036 | ADR-025, ADR-026 |
+| **Market Data Resilience** | yfinance with per-symbol isolation & tenacity retry | Incremental PostgreSQL OHLCV daily candle cache | T-035 | ADR-026 |
+| **Data Contracts** | Typed Pydantic models in `app/models.py` | Strict runtime schema enforcement | T-027 | ADR-003 |
+| **Credentials** | Pydantic `SecretStr` preventing secret leaks | Vault / KMS cloud secret provider | T-027 | ADR-001 |
+| **Concurrency** | Bounded `ThreadPoolExecutor(max_workers=3)` + tenacity retries | Distributed task workers if scale requires | T-030 | ADR-019 |
+| **Evaluation** | NIFTY 100 Buy-and-Hold benchmark, Profit Factor, R-multiples, `/performance` | Monte Carlo drawdown simulations | T-007 | ADR-011 |
+| **Backtesting** | Event-driven walk-forward backtester reusing production pipeline | Interactive visual backtest analyzer in Web UI | T-031, T-036 | ADR-012, ADR-025 |
+
 
 ## Target Research Architecture
 

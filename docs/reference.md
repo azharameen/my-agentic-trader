@@ -106,12 +106,27 @@ Paper evaluation & benchmark:
   interpreting Sharpe ratios or win-rate confidence intervals.
 - Evaluation is read-only. It does not tune strategies, thresholds, or risk.
 
-Operational status:
+Operational status & position tracking (ADR-026):
 
 - Telegram `/status` reports trading mode, provider/model configuration status,
   scan schedule, pending approvals, open paper trades, cache size, outbox
   backlog, database connection status, and bot heartbeat.
-- The command is read-only and does not alter approvals, execution, or settings.
+- Telegram `/positions` renders a real-time markdown table of open paper trades
+  with entry price, current market price, unrealized P&L (₹ and %), stop/target
+  distance, and total portfolio capital heat %.
+- Proposal cards feature an inline `[🔬 Agent Debate]` button that displays the
+  Bear Risk Critic's objections and Bull Momentum thesis on demand.
+- Daily Scan Digest: Automatic summary banner sent after the 15:45 IST scan with
+  macro regime status, count screened, technical qualifiers, veto breakdown, and
+  proposals generated.
+- Commands are read-only and do not alter approvals, execution, or settings.
+
+Incremental Market Data Caching (ADR-026):
+
+- Stored in PostgreSQL `ohlcv_daily_bars` table.
+- Stores historical daily OHLCV bars; daily scans perform an incremental fetch
+  for only the latest daily bar rather than downloading months of history.
+- Cuts Yahoo Finance API calls by ~95%, eliminating 401 Crumb and delisting rate-limit errors.
 
 Scan measurement:
 

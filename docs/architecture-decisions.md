@@ -417,3 +417,43 @@ choices require a new ADR or an explicit superseding decision.
      soft / 2.5 ATR hard / 2.0 R:R).
 - Consequence: Expands candidate generation while preventing duplicate simultaneous
   proposals or operator choice paralysis.
+
+## ADR-025: Hybrid Control Plane (Telegram Primary + Phase 7 React Analytics)
+
+- Status: accepted
+- Context: The operator evaluated whether to replace the Telegram bot with a custom
+  React web application or keep Telegram. Swing trading requires frictionless
+  push notifications and instant mobile approvals at 15:45 IST without hosting
+  public web endpoints, while in-depth equity curves and multi-candle backtesting
+  benefit from rich visual charts.
+- Decision:
+  1. Telegram Bot remains the primary operational control plane for real-time
+     push notifications, 1-tap Human-In-The-Loop (HITL) trade approvals,
+     conversational research Q&A, and active position monitoring.
+  2. A dedicated React Web Application (FastAPI backend + React + Lightweight Charts)
+     is scoped as an independent Phase 7 milestone.
+  3. The Web UI will function as a read-only visualizer querying the existing
+     PostgreSQL database, preserving the lean containerized local-first design.
+- Consequence: Retains mobile immediacy and zero-server overhead for daily operations
+  while establishing a clean roadmap for visual analytics.
+
+## ADR-026: Telegram Usability Suite & Incremental Market Data Caching
+
+- Status: accepted
+- Context: Live production operation revealed three user experience frictions:
+  (1) Yahoo Finance crumb/delisting anomalies skip symbols during universe scans;
+  (2) Proposal cards lack 1-tap drill-down into Bear vs Bull debate arguments;
+  (3) Active paper positions lack a dedicated summary tracker with portfolio heat.
+- Decision:
+  1. Add an interactive inline button `[🔬 Agent Debate]` on Telegram proposal cards
+     to dynamically display the Bear Risk Critic's objections and Bull Analyst's thesis.
+  2. Add a dedicated `/positions` command rendering open trades, entry/current prices,
+     unrealized P&L (₹ and %), stop-loss distance, and total portfolio capital heat %.
+  3. Send an automated Daily Scan Digest notification immediately after every 15:45 IST
+     run summarizing macro regime, screened count, qualifiers, vetoes, and proposals.
+  4. Implement an Incremental OHLCV Cache in PostgreSQL that stores historical bars
+     and only fetches the single latest day bar during daily scans, reducing network
+     calls by ~95% and eliminating rate-limit/crumb errors.
+- Consequence: Eliminates daily scan skipping, provides complete research transparency,
+  and delivers full position tracking directly inside Telegram.
+
