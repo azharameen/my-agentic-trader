@@ -146,20 +146,37 @@ def init_all_tables() -> None:
     );
     """
 
+    ddl_ohlcv = """
+    CREATE TABLE IF NOT EXISTS ohlcv_daily_bars (
+        symbol          TEXT NOT NULL,
+        timestamp       TEXT NOT NULL,
+        open_price      DOUBLE PRECISION NOT NULL,
+        high_price      DOUBLE PRECISION NOT NULL,
+        low_price       DOUBLE PRECISION NOT NULL,
+        close_price     DOUBLE PRECISION NOT NULL,
+        volume          BIGINT NOT NULL,
+        source          TEXT NOT NULL DEFAULT 'yfinance',
+        created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (symbol, timestamp)
+    );
+    """
+
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_audit_status ON trade_audit_log(status);",
         "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON trade_audit_log(timestamp);",
         "CREATE INDEX IF NOT EXISTS idx_audit_symbol ON trade_audit_log(symbol);",
         "CREATE INDEX IF NOT EXISTS idx_outbox_created ON notification_outbox(created_at);",
         "CREATE INDEX IF NOT EXISTS idx_evidence_symbol ON evidence_snapshots(symbol);",
+        "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_ts ON ohlcv_daily_bars(symbol, timestamp DESC);",
     ]
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        for statement in [ddl_audit, ddl_outbox, ddl_cache, ddl_evidence, ddl_threads] + indexes:
+        for statement in [ddl_audit, ddl_outbox, ddl_cache, ddl_evidence, ddl_threads, ddl_ohlcv] + indexes:
             cursor.execute(statement)
 
     logger.info("All relational tables and indexes initialized successfully.")
+
 
 
 def reset() -> None:
