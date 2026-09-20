@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.retry import network_retry
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -68,11 +68,11 @@ def _parse_csv(raw_text: str) -> list[dict]:
     return rows
 
 
-@retry(
-    reraise=True,
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    retry=retry_if_exception_type((requests.RequestException, UniverseFetchError)),
+@network_retry(
+    max_attempts=3,
+    min_wait=1.0,
+    max_wait=8.0,
+    retry_exceptions=(requests.RequestException, UniverseFetchError),
 )
 def _fetch_live_csv_text() -> str:
     settings = get_settings()

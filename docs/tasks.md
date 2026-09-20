@@ -33,8 +33,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | **T-027** | `done` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
 | **T-028** | `done` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
 | **T-029** | `done` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
-| **T-030** | `active` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
-| **T-031** | `backlog` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
+| **T-030** | `done` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
+| **T-031** | `active` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
 | **T-023** | `done` | High | ADR-019 | LangGraph platform modernization (native store, durability, time-travel history) |
 | **T-024** | `done` | High | ADR-020 | LangChain agent modernization (`create_agent` + PII, tool-limit, summarization middleware) |
 | **T-015** | `done` | High | ADR-007 | Telegram single-operator control, checkpointed chat memory, and profile store |
@@ -55,43 +55,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-### T-030 Concurrency Hardening, Thread Pools & Tenacity Retries
-- Status: `active`
-- Priority: `Medium`
-- Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
-- Goal: Eliminate unbounded daemon thread spawning in Telegram bot and add resilient exponential backoff.
-
-#### Sub-Task 30.1: Bounded Worker Pool in Telegram Bot
-- Goal: Prevent OS thread exhaustion under high message or command volume.
-##### Milestone 30.1.1: ThreadPoolExecutor Integration
-- [ ] Replace `threading.Thread(...).start()` in `telegram_bot.py` with a module-level `ThreadPoolExecutor(max_workers=3)`
-- [ ] Add command rate-limiting decorator
-- [ ] Add graceful thread pool shutdown on bot termination
-
-#### Sub-Task 30.2: Centralized Network Retries (`app/retry.py`)
-- Goal: Handle transient network hiccups gracefully without crashing scheduled scans.
-##### Milestone 30.2.1: Tenacity Decorators
-- [ ] Implement `network_retry` with exponential backoff (1s to 10s, max 3 attempts)
-- [ ] Apply retry decorators to `news.fetch_headlines`, `universe._fetch_live`, and corporate event ingestion
-
-#### Acceptance Criteria
-1. Telegram bot processes concurrent commands through a bounded pool without spawning unbounded threads.
-2. Transient network errors on RSS feeds or universe downloads retry automatically with backoff.
-
----
-
-## 4. Tasks Ready for Implementation (`todo`)
-
-*(Currently 0 tasks in todo. Ready to promote from backlog: T-031.)*
-
----
-
-## 5. Backlog Tasks (`backlog`)
-
----
-
 ### T-031 Walk-Forward Backtesting Framework
-- Status: `backlog`
+- Status: `active`
 - Priority: `Medium`
 - Related ADRs: [ADR-012](architecture-decisions.md#adr-012-modernization-preserves-paper-only-execution)
 - Goal: Provide an event-driven backtesting engine reusing exact production screener, risk, and cost logic.
@@ -110,6 +75,18 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 #### Acceptance Criteria
 1. Backtest engine uses the exact production risk and strategy code without duplication.
 2. Produces accurate equity curve, Sharpe ratio, and drawdown reports without lookahead bias.
+
+---
+
+## 4. Tasks Ready for Implementation (`todo`)
+
+*(Currently 0 tasks in todo.)*
+
+---
+
+## 5. Backlog Tasks (`backlog`)
+
+*(All current Phase 6 tasks are active or completed.)*
 
 ---
 
@@ -152,6 +129,17 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-030 Concurrency Hardening, Thread Pools & Tenacity Retries
+- Status: `done`
+- Priority: `Medium`
+- Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
+- Completed Milestones:
+  - [x] Implemented bounded `ThreadPoolExecutor(max_workers=3)` in `app/telegram_bot.py` via `submit_background_task`
+  - [x] Added graceful thread pool draining and shutdown via `shutdown_worker_pool()` in `stop_bot()`
+  - [x] Built centralized retry engine in `app/retry.py` (`network_retry`, `db_retry`) with exponential backoff, jitter, and logging
+  - [x] Applied `network_retry` to `universe._fetch_live_csv_text`, `news._parse_feed_with_retry`, `corporate_events._fetch_remote_events_json`, and `telegram_bot._post_telegram_message`
+  - [x] Created `tests/test_retry.py` and `tests/test_concurrency.py` with 100% test pass rate
 
 ### T-029 Sequential Multi-Agent Research Subgraph with Early Exit
 - Status: `done`

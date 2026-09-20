@@ -21,10 +21,10 @@ Security invariant: The bot only responds to `TELEGRAM_CHAT_ID`.
 from __future__ import annotations
 
 import logging
-import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from telegram import (
     InlineKeyboardButton,
@@ -42,12 +42,41 @@ from telegram.ext import (
 )
 
 from app import chat_agent, executor, universe
+from app.retry import network_retry
 from config.settings import get_settings
 
 if TYPE_CHECKING:
     import asyncio
 
 logger = logging.getLogger(__name__)
+
+_WORKER_POOL: Optional[ThreadPoolExecutor] = None
+
+
+def get_worker_pool() -> ThreadPoolExecutor:
+    """Bounded thread pool executor for background scans, runs, and LLM chat queries."""
+    global _WORKER_POOL
+    if _WORKER_POOL is None:
+        _WORKER_POOL = ThreadPoolExecutor(
+            max_workers=3,
+            thread_name_prefix="telegram-worker",
+        )
+    return _WORKER_POOL
+
+
+def shutdown_worker_pool(wait: bool = True) -> None:
+    """Gracefully drain and shutdown the Telegram worker pool."""
+    global _WORKER_POOL
+    if _WORKER_POOL is not None:
+        logger.info("Shutting down Telegram worker pool (wait=%s)...", wait)
+        _WORKER_POOL.shutdown(wait=wait)
+        _WORKER_POOL = None
+
+
+def submit_background_task(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
+    """Submit a blocking pipeline/chat task to the bounded worker pool."""
+    pool = get_worker_pool()
+    return pool.submit(fn, *args, **kwargs)
 
 
 def _is_authorized(update: Update) -> bool:
@@ -234,7 +263,7 @@ def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
                 message.reply_text(summary, parse_mode="Markdown"), _bot_loop
             )
 
-    threading.Thread(target=_work, name="pipeline-worker", daemon=True).start()
+    submit_background_task(_work)
 
 
 async def _on_scan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -373,7 +402,7 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 message.reply_text(answer[:4000]), _bot_loop
             )
 
-    threading.Thread(target=_work, name="chat-agent-worker", daemon=True).start()
+    submit_background_task(_work)
 
 
 def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboardMarkup) -> bool:
@@ -399,6 +428,7 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
         return True
 
 
+@network_retry(max_attempts=3, min_wait=1.0, max_wait=5.0)
 def _post_telegram_message(url: str, body: dict) -> Any:
     import requests
 
@@ -534,6 +564,7 @@ def start_bot() -> None:
 
 def stop_bot() -> None:
     """Ask run_polling to perform its normal graceful shutdown."""
+    shutdown_worker_pool(wait=False)
     application = _running_application
     loop = _bot_loop
     if application is None or loop is None or not loop.is_running():

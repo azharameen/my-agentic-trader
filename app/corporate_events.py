@@ -13,6 +13,7 @@ from typing import Iterable, Optional
 from pydantic import BaseModel, Field
 
 from app import evidence
+from app.retry import network_retry
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,15 @@ def _load_cached_events() -> list[CorporateEvent]:
         return []
 
 
+@network_retry(max_attempts=3, min_wait=1.0, max_wait=5.0)
+def _fetch_remote_events_json(url: str) -> list[dict]:
+    import requests
+
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
 def fetch_events() -> list[CorporateEvent]:
     """Load configured event data, falling back to the local cache.
 
@@ -178,11 +188,8 @@ def fetch_events() -> list[CorporateEvent]:
     if not settings.CORPORATE_EVENTS_ENABLED or not settings.CORPORATE_EVENTS_SOURCE_URL:
         return _load_cached_events()
     try:
-        import requests
-
-        response = requests.get(settings.CORPORATE_EVENTS_SOURCE_URL, timeout=15)
-        response.raise_for_status()
-        events = parse_event_rows(response.json())
+        raw_rows = _fetch_remote_events_json(settings.CORPORATE_EVENTS_SOURCE_URL)
+        events = parse_event_rows(raw_rows)
         if events:
             path = Path(settings.CORPORATE_EVENTS_CACHE_PATH)
             path.parent.mkdir(parents=True, exist_ok=True)

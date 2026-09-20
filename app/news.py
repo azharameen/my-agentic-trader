@@ -20,6 +20,7 @@ import feedparser
 
 from app import cache, universe
 from app.evidence import content_hash
+from app.retry import network_retry
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,14 @@ def _matches(title: str, symbol: str, company_name: Optional[str]) -> bool:
     return False
 
 
+@network_retry(max_attempts=2, min_wait=0.5, max_wait=2.0)
+def _parse_feed_with_retry(feed_url: str):
+    return feedparser.parse(feed_url)
+
+
 def _titles_from_feed(feed_url: str, symbol: str, company_name: Optional[str]) -> list[str]:
     try:
-        parsed = feedparser.parse(feed_url)
+        parsed = _parse_feed_with_retry(feed_url)
     except Exception as exc:  # noqa: BLE001 - one bad feed must not skip the others
         logger.debug("RSS feed %s failed: %s", feed_url, exc)
         return []
