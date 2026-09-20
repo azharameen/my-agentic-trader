@@ -107,6 +107,29 @@ def cmd_history(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_backtest(args: argparse.Namespace) -> None:
+    """Run an event-driven backtest for a symbol over a date range."""
+    from app import backtester
+
+    symbol = args.symbol.upper()
+    start_date = args.start
+    end_date = args.end
+    capital = args.capital
+
+    logger.info("Running backtest for %s (%s to %s)...", symbol, start_date, end_date)
+    result = backtester.run_backtest(
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=capital,
+    )
+    report = backtester.format_backtest_report(result)
+    try:
+        print("\n" + report + "\n")
+    except UnicodeEncodeError:
+        print("\n" + report.encode("ascii", "replace").decode("ascii") + "\n")
+
+
 def _scheduled_scan() -> None:
     """apscheduler job: run the daily universe scan."""
     try:
@@ -200,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("evaluate", help="Evaluate paper-trade outcomes")
     history_p = sub.add_parser("history", help="Show full checkpoint history for one symbol (time travel)")
     history_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
+    bt_p = sub.add_parser("backtest", help="Run historical bar-by-bar walk-forward backtest")
+    bt_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
+    bt_p.add_argument("--start", required=True, help="Start date YYYY-MM-DD")
+    bt_p.add_argument("--end", required=True, help="End date YYYY-MM-DD")
+    bt_p.add_argument("--capital", type=float, default=None, help="Initial portfolio capital in INR")
     return parser
 
 
@@ -238,6 +266,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             cmd_evaluate(args)
         elif args.command == "history":
             cmd_history(args)
+        elif args.command == "backtest":
+            cmd_backtest(args)
         return 0
     finally:
         db.reset()

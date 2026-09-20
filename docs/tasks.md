@@ -34,7 +34,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | **T-028** | `done` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
 | **T-029** | `done` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
 | **T-030** | `done` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
-| **T-031** | `active` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
+| **T-031** | `done` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
 | **T-023** | `done` | High | ADR-019 | LangGraph platform modernization (native store, durability, time-travel history) |
 | **T-024** | `done` | High | ADR-020 | LangChain agent modernization (`create_agent` + PII, tool-limit, summarization middleware) |
 | **T-015** | `done` | High | ADR-007 | Telegram single-operator control, checkpointed chat memory, and profile store |
@@ -55,26 +55,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-### T-031 Walk-Forward Backtesting Framework
-- Status: `active`
-- Priority: `Medium`
-- Related ADRs: [ADR-012](architecture-decisions.md#adr-012-modernization-preserves-paper-only-execution)
-- Goal: Provide an event-driven backtesting engine reusing exact production screener, risk, and cost logic.
-
-#### Sub-Task 31.1: Backtest Engine Core (`app/backtester.py`)
-- Goal: Simulate historical performance bar-by-bar with zero lookahead bias.
-##### Milestone 31.1.1: Event Simulation Loop
-- [ ] Iterate through historical OHLCV candles bar-by-bar
-- [ ] Execute `SetupStrategy.qualifies()` and `calculate_risk()` at each simulated bar
-- [ ] Simulate fills with realistic slippage and turnover transaction costs
-- [ ] Auto-close positions on stop-loss or profit-target breach
-##### Milestone 31.1.2: Performance Reporting & CLI
-- [ ] Calculate equity curve, Sharpe ratio, Max Drawdown, and monthly returns matrix
-- [ ] Expose CLI: `python -m app.main backtest SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD`
-
-#### Acceptance Criteria
-1. Backtest engine uses the exact production risk and strategy code without duplication.
-2. Produces accurate equity curve, Sharpe ratio, and drawdown reports without lookahead bias.
+*(Currently 0 active implementation tasks. All Phase 6 development tasks completed.)*
 
 ---
 
@@ -86,7 +67,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 5. Backlog Tasks (`backlog`)
 
-*(All current Phase 6 tasks are active or completed.)*
+*(All current Phase 6 tasks are completed.)*
 
 ---
 
@@ -129,6 +110,19 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-031 Walk-Forward Backtesting Framework
+- Status: `done`
+- Priority: `Medium`
+- Related ADRs: [ADR-012](architecture-decisions.md#adr-012-modernization-preserves-paper-only-execution)
+- Completed Milestones:
+  - [x] Implemented event-driven, bar-by-bar backtesting engine in `app/backtester.py` (`run_backtest`) with zero lookahead bias
+  - [x] Evaluated active setup strategies (`evaluate_all_strategies`) and deterministic risk engine (`calculate_risk`) at each simulated bar
+  - [x] Simulated realistic transaction friction (0.05% slippage on entry/exit and turnover delivery costs via `calculate_delivery_costs`)
+  - [x] Built performance analytics: Equity Curve, Annualized Sharpe Ratio, Peak-to-Trough Max Drawdown %, Profit Factor, and Win/Loss R-multiples
+  - [x] Implemented ASCII/Markdown scorecard report formatter (`format_backtest_report`)
+  - [x] Added `backtest` sub-command to `app/main.py` CLI
+  - [x] Created `tests/test_backtester.py` covering synthetic market simulations, lookahead protection, and CLI integration with 100% test pass rate
 
 ### T-030 Concurrency Hardening, Thread Pools & Tenacity Retries
 - Status: `done`
