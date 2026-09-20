@@ -46,8 +46,8 @@ class Settings(BaseSettings):
         default="openai_compatible",
         description="Active provider: openai_compatible, openai, gemini, anthropic, or groq.",
     )
-    OPENAI_API_KEY: str = Field(
-        default="",
+    OPENAI_API_KEY: SecretStr = Field(
+        default=SecretStr(""),
         description="API key for OpenAI or an OpenAI-compatible gateway.",
     )
     OPENAI_BASE_URL: str = Field(
@@ -58,11 +58,11 @@ class Settings(BaseSettings):
         default="gpt-4o-mini",
         description="Chat model id served by the endpoint.",
     )
-    GOOGLE_API_KEY: str = Field(default="")
+    GOOGLE_API_KEY: SecretStr = Field(default=SecretStr(""))
     GEMINI_MODEL: str = Field(default="gemini-2.0-flash")
-    ANTHROPIC_API_KEY: str = Field(default="")
+    ANTHROPIC_API_KEY: SecretStr = Field(default=SecretStr(""))
     ANTHROPIC_MODEL: str = Field(default="claude-3-5-haiku-latest")
-    GROQ_API_KEY: str = Field(default="")
+    GROQ_API_KEY: SecretStr = Field(default=SecretStr(""))
     GROQ_MODEL: str = Field(default="llama-3.3-70b-versatile")
     LLM_TIMEOUT_SECONDS: int = Field(default=20)
     LLM_MAX_RETRIES: int = Field(default=1)
@@ -79,8 +79,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # Telegram (Human-in-the-Loop approval channel)
     # ------------------------------------------------------------------ #
-    TELEGRAM_BOT_TOKEN: str = Field(
-        default="",
+    TELEGRAM_BOT_TOKEN: SecretStr = Field(
+        default=SecretStr(""),
         description="Bot token from @BotFather. Required for HITL approval.",
     )
     TELEGRAM_CHAT_ID: str = Field(
@@ -204,8 +204,8 @@ class Settings(BaseSettings):
         description="Opt-in LangSmith tracing for LangGraph/LangChain runs (ADR-021). "
         "Off by default; requires LANGSMITH_API_KEY to actually activate.",
     )
-    LANGSMITH_API_KEY: str = Field(
-        default="",
+    LANGSMITH_API_KEY: SecretStr = Field(
+        default=SecretStr(""),
         description="LangSmith API key. Never logged; stays in .env/secret storage only.",
     )
     LANGSMITH_PROJECT: str = Field(

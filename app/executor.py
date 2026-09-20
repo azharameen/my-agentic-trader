@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app import db
+from app.models import ExecutionResult
 from app.risk import calculate_delivery_costs
 from app.state import TradeProposal
 from config.settings import get_settings
@@ -74,11 +75,11 @@ def record_open_trade(
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
     cache_hits: Optional[list[str]] = None,
-) -> dict:
+) -> ExecutionResult:
     """Simulate a paper fill and persist an OPEN_PAPER trade row.
 
     The fill price applies slippage against the entry (buys fill slightly
-    higher than the quoted entry). Returns the full record dict including the
+    higher than the quoted entry). Returns the `ExecutionResult` model including the
     generated `trade_id` and `fill_price`.
     """
     settings = get_settings()
@@ -132,14 +133,14 @@ def record_open_trade(
         "PAPER FILL %s %s qty=%d fill=%.2f (slippage %.4f%%)",
         trade_id, proposal.symbol, proposal.quantity, fill_price, SLIPPAGE_PCT * 100,
     )
-    return {
-        "trade_id": trade_id,
-        "symbol": proposal.symbol,
-        "fill_price": fill_price,
-        "quantity": proposal.quantity,
-        "status": "OPEN_PAPER",
-        "slippage_pct": SLIPPAGE_PCT * 100,
-    }
+    return ExecutionResult(
+        trade_id=trade_id,
+        symbol=proposal.symbol,
+        fill_price=fill_price,
+        quantity=proposal.quantity,
+        status="OPEN_PAPER",
+        slippage_pct=SLIPPAGE_PCT * 100,
+    )
 
 
 def close_trade(

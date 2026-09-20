@@ -20,15 +20,24 @@ def _common_kwargs(settings: Any) -> dict[str, Any]:
     }
 
 
+def _secret_str(val: Any) -> str:
+    """Safely extract the plain string from a SecretStr or string."""
+    if hasattr(val, "get_secret_value"):
+        return val.get_secret_value()
+    return str(val or "")
+
+
 def is_configured() -> bool:
     settings = get_settings()
-    return bool({
-        "openai_compatible": settings.OPENAI_API_KEY,
-        "openai": settings.OPENAI_API_KEY,
-        "gemini": settings.GOOGLE_API_KEY,
-        "anthropic": settings.ANTHROPIC_API_KEY,
-        "groq": settings.GROQ_API_KEY,
-    }.get(settings.LLM_PROVIDER))
+    key_mapping = {
+        "openai_compatible": _secret_str(settings.OPENAI_API_KEY),
+        "openai": _secret_str(settings.OPENAI_API_KEY),
+        "gemini": _secret_str(settings.GOOGLE_API_KEY),
+        "anthropic": _secret_str(settings.ANTHROPIC_API_KEY),
+        "groq": _secret_str(settings.GROQ_API_KEY),
+    }
+    key_val = key_mapping.get(settings.LLM_PROVIDER, "")
+    return bool(key_val.strip())
 
 
 def provider_metadata() -> dict[str, str]:
@@ -50,18 +59,30 @@ def build_chat_model() -> Any:
     provider = settings.LLM_PROVIDER
 
     if provider in {"openai_compatible", "openai"}:
-        kwargs.update(model=settings.OPENAI_MODEL, api_key=settings.OPENAI_API_KEY)
+        kwargs.update(
+            model=settings.OPENAI_MODEL,
+            api_key=_secret_str(settings.OPENAI_API_KEY),
+        )
         if provider == "openai_compatible" and settings.OPENAI_BASE_URL:
             kwargs["base_url"] = settings.OPENAI_BASE_URL
         return ChatOpenAI(**kwargs)
     if provider == "gemini":
-        kwargs.update(model=settings.GEMINI_MODEL, google_api_key=settings.GOOGLE_API_KEY)
+        kwargs.update(
+            model=settings.GEMINI_MODEL,
+            google_api_key=_secret_str(settings.GOOGLE_API_KEY),
+        )
         return ChatGoogleGenerativeAI(**kwargs)
     if provider == "anthropic":
-        kwargs.update(model=settings.ANTHROPIC_MODEL, api_key=settings.ANTHROPIC_API_KEY)
+        kwargs.update(
+            model=settings.ANTHROPIC_MODEL,
+            api_key=_secret_str(settings.ANTHROPIC_API_KEY),
+        )
         return ChatAnthropic(**kwargs)
     if provider == "groq":
-        kwargs.update(model=settings.GROQ_MODEL, api_key=settings.GROQ_API_KEY)
+        kwargs.update(
+            model=settings.GROQ_MODEL,
+            api_key=_secret_str(settings.GROQ_API_KEY),
+        )
         return ChatGroq(**kwargs)
     raise ValueError(f"Unknown LLM_PROVIDER: {provider}")
 

@@ -1,5 +1,4 @@
-"""
-Quantitative screening engine.
+"""Quantitative screening engine.
 
 Downloads daily OHLCV for the NIFTY 100 universe via `yfinance`, computes the
 technical indicators (EMA_200, RSI_14, ATR_14) with pandas, and applies a
@@ -18,6 +17,8 @@ from typing import Iterable, Optional
 import pandas as pd
 
 from app import cache, market_data
+from app.evidence import content_hash
+from app.models import TechnicalSnapshot
 from app.strategies import get_setup_strategy
 from config.settings import get_settings
 
@@ -106,18 +107,19 @@ def _passes_setup_filter(row: pd.Series) -> bool:
     return strategy.qualifies(row, settings)
 
 
-def get_symbol_snapshot(symbol: str) -> Optional[dict]:
+def get_symbol_snapshot(symbol: str) -> Optional[TechnicalSnapshot]:
     """Fetch the latest technical snapshot for a single symbol.
 
     Unlike `scan_nifty_universe`, this does NOT apply the setup filter — it
     returns the indicators even when the symbol does not qualify, so callers
     (e.g. the chat agent) can explain *why* a symbol did or did not pass.
 
-    Returns a dict with `symbol`, `daily_close`, `rsi`, `ema_200`, `atr`,
-    `volume`, `avg_volume_20`, `qualifies`, or `None` if no data is available.
+    Returns a `TechnicalSnapshot` model with `symbol`, `daily_close`, `rsi`,
+    `ema_200`, `atr`, `volume`, `avg_volume_20`, `qualifies`, or `None` if no
+    data is available.
     """
     settings = get_settings()
-    cache_key = str({
+    cache_key = content_hash({
         "symbol": canonical_symbol(symbol),
         "history_period": settings.HISTORY_PERIOD,
         "strategy": settings.SETUP_STRATEGY,
@@ -126,7 +128,9 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
     })
     cached, cache_hit = cache.get_value_with_status("technical", cache_key)
     if cached is not None:
-        return {**cached, "cache_hit": cache_hit}
+        if isinstance(cached, dict):
+            return TechnicalSnapshot(**{**cached, "cache_hit": cache_hit})
+        return cached
     nse_symbol = _to_nse_symbol(symbol)
     try:
         result = _load_history(nse_symbol, settings.HISTORY_PERIOD)
@@ -136,24 +140,24 @@ def get_symbol_snapshot(symbol: str) -> Optional[dict]:
 
     df = _compute_indicators(result.frame)
     latest = df.iloc[-1]
-    snapshot = {
-        "symbol": canonical_symbol(symbol),
-        "daily_close": float(latest["close"]),
-        "rsi": float(latest["rsi_14"]),
-        "ema_200": float(latest["ema_200"]),
-        "atr": float(latest["atr_14"]),
-        "volume": float(latest["volume"]),
-        "avg_volume_20": float(latest["avg_volume_20"]),
-        "qualifies": bool(_passes_setup_filter(latest)),
-        "data_source": result.source,
-        "data_fetched_at": result.fetched_at.isoformat(),
-        "cache_hit": False,
-    }
-    cache.set_value("technical", cache_key, snapshot, settings.TECHNICAL_CACHE_MINUTES)
+    snapshot = TechnicalSnapshot(
+        symbol=canonical_symbol(symbol),
+        daily_close=float(latest["close"]),
+        rsi=float(latest["rsi_14"]),
+        ema_200=float(latest["ema_200"]),
+        atr=float(latest["atr_14"]),
+        volume=float(latest["volume"]),
+        avg_volume_20=float(latest["avg_volume_20"]),
+        qualifies=bool(_passes_setup_filter(latest)),
+        data_source=result.source,
+        data_fetched_at=result.fetched_at.isoformat(),
+        cache_hit=False,
+    )
+    cache.set_value("technical", cache_key, snapshot.model_dump(), settings.TECHNICAL_CACHE_MINUTES)
     return snapshot
 
 
-def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
+def scan_nifty_universe(universe: Iterable[str]) -> list[TechnicalSnapshot]:
     """Screen the NIFTY 100 universe and return qualifying setups.
 
     Parameters
@@ -164,8 +168,8 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
 
     Returns
     -------
-    list[dict]
-        One dict per qualifying symbol with the latest technical snapshot:
+    list[TechnicalSnapshot]
+        One TechnicalSnapshot per qualifying symbol with the latest technical indicators:
         `symbol`, `daily_close`, `rsi`, `ema_200`, `atr`, `volume`,
         `avg_volume_20`. Symbols that fail the filter or have bad data are
         skipped (and logged) rather than raising, so one bad ticker never
@@ -177,17 +181,17 @@ def scan_nifty_universe(universe: Iterable[str]) -> list[dict]:
     """
     settings = get_settings()
     symbols = list(universe)
-    results: list[dict] = []
+    results: list[TechnicalSnapshot] = []
 
-    def _screen_one(raw_symbol: str) -> Optional[dict]:
+    def _screen_one(raw_symbol: str) -> Optional[TechnicalSnapshot]:
         snapshot = get_symbol_snapshot(raw_symbol)
-        if snapshot is None or not snapshot["qualifies"]:
+        if snapshot is None or not snapshot.qualifies:
             logger.debug("Symbol %s did not pass the setup filter.", raw_symbol)
             return None
 
         logger.info(
             "SETUP QUALIFIED: %s close=%.2f rsi=%.1f ema200=%.2f atr=%.2f",
-            raw_symbol, snapshot["daily_close"], snapshot["rsi"], snapshot["ema_200"], snapshot["atr"],
+            raw_symbol, snapshot.daily_close, snapshot.rsi, snapshot.ema_200, snapshot.atr,
         )
         return snapshot
 

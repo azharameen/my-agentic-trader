@@ -26,14 +26,19 @@ def _apply_langsmith_env(settings: Settings) -> None:
     """
     if not settings.LANGSMITH_TRACING_ENABLED:
         return
-    if not settings.LANGSMITH_API_KEY:
+    key = (
+        settings.LANGSMITH_API_KEY.get_secret_value()
+        if hasattr(settings.LANGSMITH_API_KEY, "get_secret_value")
+        else str(settings.LANGSMITH_API_KEY or "")
+    )
+    if not key.strip():
         logger.warning(
             "LANGSMITH_TRACING_ENABLED is true but LANGSMITH_API_KEY is empty; "
             "LangSmith tracing stays disabled."
         )
         return
     os.environ["LANGSMITH_TRACING"] = "true"
-    os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+    os.environ["LANGSMITH_API_KEY"] = key
     os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
     if settings.LANGSMITH_ENDPOINT:
         os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT

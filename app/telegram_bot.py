@@ -405,10 +405,20 @@ def _post_telegram_message(url: str, body: dict) -> Any:
     return requests.post(url, json=body, timeout=15)
 
 
+def _bot_token() -> str:
+    """Safely extract the plain token string from settings."""
+    settings = get_settings()
+    token = settings.TELEGRAM_BOT_TOKEN
+    if hasattr(token, "get_secret_value"):
+        return token.get_secret_value()
+    return str(token or "")
+
+
 def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
     """Push a proposal card (with buttons) to the configured chat."""
     settings = get_settings()
-    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+    token = _bot_token()
+    if not token or not settings.TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured; cannot push proposal for %s.", payload.get("symbol"))
         return False
 
@@ -416,7 +426,7 @@ def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
     markup = _build_keyboard(payload.get("symbol", ""))
 
     if _running_application is None:
-        return _send_via_bot_api(settings.TELEGRAM_BOT_TOKEN, chat_id, text, markup)
+        return _send_via_bot_api(token, chat_id, text, markup)
 
     import asyncio
 
@@ -432,13 +442,13 @@ def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
         asyncio.run_coroutine_threadsafe(_push(), _bot_loop)
         return True
     else:
-        return _send_via_bot_api(settings.TELEGRAM_BOT_TOKEN, chat_id, text, markup)
+        return _send_via_bot_api(token, chat_id, text, markup)
 
 
 def notify_text(chat_id: str, text: str) -> None:
     """Push a plain Markdown text notification (no buttons) to the operator."""
-    settings = get_settings()
-    if not settings.TELEGRAM_BOT_TOKEN or not chat_id:
+    token = _bot_token()
+    if not token or not chat_id:
         logger.warning("Telegram not configured; cannot send notification.")
         return
 
@@ -450,7 +460,7 @@ def notify_text(chat_id: str, text: str) -> None:
 
         asyncio.run_coroutine_threadsafe(_push(), _bot_loop)
     else:
-        url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
         resp = _post_telegram_message(
             url, {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
         )
@@ -492,12 +502,12 @@ async def _write_heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
 def start_bot() -> None:
     """Build and start the long-polling Telegram bot (blocking)."""
     global _bot_loop, _running_application
-    settings = get_settings()
-    if not settings.TELEGRAM_BOT_TOKEN:
+    token = _bot_token()
+    if not token:
         logger.warning("TELEGRAM_BOT_TOKEN not set; HITL bot disabled.")
         return
 
-    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(token).build()
     _running_application = application
 
     application.add_handler(CommandHandler("start", _on_start))

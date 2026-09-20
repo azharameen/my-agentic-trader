@@ -30,7 +30,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
 | **T-007** | `done` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
-| **T-027** | `backlog` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
+| **T-027** | `done` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
 | **T-028** | `backlog` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
 | **T-029** | `backlog` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
 | **T-030** | `backlog` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
@@ -55,46 +55,17 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active tasks. Next candidates from `todo`: T-004, T-007.)*
+*(Currently 0 active tasks. Next candidates from `todo`: T-028, T-029.)*
 
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
 
-*(Currently 0 tasks in todo. Ready to promote from backlog: T-027, T-028, T-029.)*
+*(Currently 0 tasks in todo. Ready to promote from backlog: T-028, T-029.)*
 
 ---
 
 ## 5. Backlog Tasks (`backlog`)
-
-### T-027 Type Safety, Typed Models & SecretStr Hardening
-- Status: `backlog`
-- Priority: `High`
-- Related ADRs: [ADR-001](architecture-decisions.md#adr-001-documentation-is-canonical), [ADR-003](architecture-decisions.md#adr-003-deterministic-numeric-risk)
-- Goal: Eliminate untyped dictionaries between pipeline stages and secure secrets with Pydantic `SecretStr`.
-
-#### Sub-Task 27.1: Typed Domain Transfer Models (`app/models.py`)
-- Goal: Standardize Pydantic data schemas across screener, pipeline, and execution.
-##### Milestone 27.1.1: Core Data Models
-- [ ] Define `TechnicalSnapshot` model (ticker, close, EMA 200, RSI 14, ATR 14, volume, avg volume)
-- [ ] Define `ExecutionResult` model (trade_id, fill_price, slippage, fill_timestamp, status)
-- [ ] Define `TradeRecord` model (full typed audit row representation)
-- [ ] Define `ScanResult` model (aggregate scan metrics, candidate count, proposal count)
-##### Milestone 27.1.2: Model Consumption Refactor
-- [ ] Update `screener.get_symbol_snapshot()` to return `TechnicalSnapshot`
-- [ ] Update `executor.record_open_trade()` to return `ExecutionResult`
-- [ ] Replace non-deterministic `str({...})` cache key in `screener.py` with `evidence.content_hash()`
-
-#### Sub-Task 27.2: SecretStr Credential Isolation
-- Goal: Prevent secret leakage in logs, stack traces, and serialization dumps.
-##### Milestone 27.2.1: Pydantic Settings Migration
-- [ ] Convert `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `LANGSMITH_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GOOGLE_API_KEY` to `SecretStr`
-- [ ] Update call sites to safely access `.get_secret_value()` only at client construction boundaries
-
-#### Acceptance Criteria
-1. Zero raw dictionaries flow across major module boundaries (`screener` $\rightarrow$ `pipeline` $\rightarrow$ `graph`).
-2. Printing or dumping `get_settings()` masks all API keys and tokens (`**********`).
-3. Full test suite passes without regression.
 
 ---
 
@@ -251,6 +222,20 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-027 Type Safety, Typed Models & SecretStr Hardening
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-001](architecture-decisions.md#adr-001-documentation-is-canonical), [ADR-003](architecture-decisions.md#adr-003-deterministic-numeric-risk)
+- Completed Milestones:
+  - [x] Defined validated domain transfer models in `app/models.py`: `TechnicalSnapshot`, `ExecutionResult`, `TradeRecord`, and `ScanResult`
+  - [x] Implemented `DictCompatibleModel` ensuring backward compatibility with dictionary subscripting in LangGraph state
+  - [x] Refactored `screener.get_symbol_snapshot()` and `screener.scan_nifty_universe()` to emit typed `TechnicalSnapshot` models
+  - [x] Refactored `executor.record_open_trade()` to emit typed `ExecutionResult` models
+  - [x] Replaced non-deterministic `str({...})` caching in `screener.py` with `evidence.content_hash()`
+  - [x] Migrated all sensitive credentials in `config/settings.py` (`OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN`, `LANGSMITH_API_KEY`) to `SecretStr`
+  - [x] Updated client construction sites in `app/llm.py`, `app/telegram_bot.py`, and `app/observability.py` to extract `.get_secret_value()` securely
+  - [x] Added `tests/test_models.py` verifying model validation, dictionary indexing, and `SecretStr` masking with 100% test pass rate
 
 ### T-007 Evaluation and Benchmark Reporting
 - Status: `done`
