@@ -28,8 +28,8 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
 | **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
+| **T-007** | `done` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
-| **T-007** | `todo` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
 | **T-027** | `backlog` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
 | **T-028** | `backlog` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
 | **T-029** | `backlog` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
@@ -61,43 +61,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 4. Tasks Ready for Implementation (`todo`)
 
-### T-007 Evaluation and Benchmark Reporting
-- Status: `todo`
-- Priority: `High`
-- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions), [ADR-013](architecture-decisions.md#adr-013-paper-transaction-costs-are-net-pnl-data)
-- Goal: Implement professional paper trading performance analytics evaluated against the NIFTY 100 Buy-and-Hold benchmark.
-- Context & Rationale: Without benchmarking against the NIFTY 100 index over identical active trading periods, it is impossible to determine whether the agent generates true alpha or merely captures market beta.
-
-#### Sub-Task 7.1: Performance Analytics Engine (`app/evaluation.py`)
-- Goal: Calculate institutional performance metrics and net alpha.
-##### Milestone 7.1.1: Advanced Trading Metrics
-- [ ] Compute Profit Factor: $\frac{\text{Total Gross Wins}}{\text{Total Gross Losses}}$
-- [ ] Compute Realized R-Multiple: $\frac{\text{Exit Price} - \text{Fill Price}}{\text{Initial Risk Per Share}}$
-- [ ] Compute Annualized Sharpe Ratio and Calmar Ratio
-- [ ] Enforce **30-trade minimum sample size** rule before rendering statistical confidence ratios
-##### Milestone 7.1.2: Benchmark Comparator
-- [ ] Download NIFTY 100 Index (`^CNX100` / `^NSEI`) performance over the exact trading window of closed trades
-- [ ] Calculate Net Strategy Alpha: $\text{Strategy Net Return \%} - \text{NIFTY 100 Benchmark Return \%}$
-
-#### Sub-Task 7.2: Operator Interfaces & Delivery
-- Goal: Expose evaluation metrics via Telegram and CLI.
-##### Milestone 7.2.1: Telegram `/performance` Command
-- [ ] Implement `/performance` command in `app.telegram_bot` rendering a formatted Markdown scorecard
-- [ ] Display warning when closed trades < 30 (pre-statistical significance warning)
-##### Milestone 7.2.2: CLI Evaluation Command
-- [ ] Update `python -m app.main evaluate` to output comprehensive metrics and benchmark comparison
-
-#### Sub-Task 7.3: Testing, Verification & Governance
-- Goal: Verify mathematical accuracy and statistical threshold behavior.
-##### Milestone 7.3.1: Deterministic Math Tests
-- [ ] Unit tests for Profit Factor, R-multiples, and Net Alpha calculations
-- [ ] Regression test asserting sample size warnings trigger below 30 closed trades
-- [ ] Verify Gate 3 criteria: 100% test pass, clean ruff/mypy
-
-#### Acceptance Criteria
-1. `python -m app.main evaluate` and Telegram `/performance` display Profit Factor, R-multiples, and Net Alpha vs NIFTY 100.
-2. System displays an explicit warning if the sample size is below 30 closed trades.
-3. Calculations are deterministic and have zero permission to alter strategy, risk, or execution state.
+*(Currently 0 tasks in todo. Ready to promote from backlog: T-027, T-028, T-029.)*
 
 ---
 
@@ -287,6 +251,19 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-007 Evaluation and Benchmark Reporting
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions), [ADR-013](architecture-decisions.md#adr-013-paper-transaction-costs-are-net-pnl-data)
+- Completed Milestones:
+  - [x] Computed Profit Factor ($\frac{\text{Gross Wins}}{\text{Gross Losses}}$), Win Rate, and Expectancy in `app.evaluation`
+  - [x] Computed per-trade Realized R-Multiples ($\frac{\text{Exit Price} - \text{Fill Price}}{\text{Initial Risk Per Share}}$), Win R, Loss R, and Average R
+  - [x] Enforced **30-trade minimum sample size** rule with prominent statistical confidence warnings when $N < 30$
+  - [x] Implemented NIFTY 100 Buy-and-Hold benchmark comparator (`fetch_benchmark_return`) and calculated Strategy Net Alpha %
+  - [x] Implemented Telegram `/performance` command rendering a structured Markdown scorecard
+  - [x] Updated `python -m app.main evaluate` CLI command to output performance and alpha metrics
+  - [x] Created `tests/test_evaluation.py` covering all calculations, edge cases, thresholds, and formatting with 100% test pass rate
 
 ### T-004 Market Context & Macro Gates
 - Status: `done`

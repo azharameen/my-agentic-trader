@@ -25,7 +25,16 @@ import sys
 import threading
 from typing import Any, Optional
 
-from app import evaluation, executor, maintenance, observability, pipeline, telegram_bot, universe
+from app import (
+    db,
+    evaluation,
+    executor,
+    maintenance,
+    observability,
+    pipeline,
+    telegram_bot,
+    universe,
+)
 from config.settings import get_settings
 
 logging.basicConfig(
@@ -43,7 +52,6 @@ def _start_telegram_in_background() -> threading.Thread:
     """Run the blocking Telegram bot on a daemon thread."""
     thread = threading.Thread(target=telegram_bot.start_bot, name="telegram-bot", daemon=True)
     thread.start()
-    logger.info("Telegram bot thread started.")
     return thread
 
 
@@ -75,7 +83,13 @@ def cmd_backup_databases(_args: argparse.Namespace) -> None:
 
 
 def cmd_evaluate(_args: argparse.Namespace) -> None:
-    logger.info("Paper evaluation: %s", evaluation.summarize_trades(executor.fetch_all_trades()))
+    trades = executor.fetch_all_trades()
+    summary = evaluation.summarize_trades(trades)
+    report = evaluation.format_performance_report(summary)
+    try:
+        print("\n" + report + "\n")
+    except UnicodeEncodeError:
+        print("\n" + report.encode("ascii", "replace").decode("ascii") + "\n")
 
 
 def cmd_history(args: argparse.Namespace) -> None:
@@ -190,6 +204,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
     settings = get_settings()
     logger.info("TRADING_MODE=%s CAPITAL=%.2f RISK=%.1f%%",
                 settings.TRADING_MODE, settings.PORTFOLIO_CAPITAL,
@@ -202,23 +221,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "scan":
-        cmd_scan(args)
-    elif args.command == "run":
-        cmd_run(args)
-    elif args.command == "serve":
-        cmd_serve(args)
-    elif args.command == "refresh-universe":
-        cmd_refresh_universe(args)
-    elif args.command == "check-databases":
-        cmd_check_databases(args)
-    elif args.command == "backup-databases":
-        cmd_backup_databases(args)
-    elif args.command == "evaluate":
-        cmd_evaluate(args)
-    elif args.command == "history":
-        cmd_history(args)
-    return 0
+    try:
+        if args.command == "scan":
+            cmd_scan(args)
+        elif args.command == "run":
+            cmd_run(args)
+        elif args.command == "serve":
+            cmd_serve(args)
+        elif args.command == "refresh-universe":
+            cmd_refresh_universe(args)
+        elif args.command == "check-databases":
+            cmd_check_databases(args)
+        elif args.command == "backup-databases":
+            cmd_backup_databases(args)
+        elif args.command == "evaluate":
+            cmd_evaluate(args)
+        elif args.command == "history":
+            cmd_history(args)
+        return 0
+    finally:
+        db.reset()
 
 
 if __name__ == "__main__":

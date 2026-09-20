@@ -1,34 +1,36 @@
-"""
-Telegram Human-in-the-Loop interface.
+"""Telegram Human-in-the-Loop approval bot and control plane.
 
-Uses `python-telegram-bot` with **long polling** (`Application.builder().build()`),
-so no public IP, webhook or SSL certificate is required — ideal for a local
-Docker deployment.
+Telegram is the ONLY user interface for the trading assistant. All operator
+interaction happens here:
+  * `/scan` — triggers a universe scan (same as CLI `python -m app.main scan`)
+  * `/run SYMBOL` — runs one symbol through the graph (e.g. `/run RELIANCE`)
+  * `/trades` — shows open paper positions and closed trade P&L
+  * `/pending` — lists proposals currently paused awaiting approval
+  * `/performance` — shows paper trading metrics and NIFTY 100 benchmark alpha
+  * `/status` — shows read-only operational health
+  * Inline buttons on proposal cards:
+      [ ✅ Approve Trade ]  -> resumes the graph thread, executes paper fill
+      [ ❌ Reject ]         -> resumes the graph thread as rejected, no order
+  * Free text messages are routed to the read-only conversational research agent
+    (`app/chat_agent.py`), which can inspect market data, explain setups and
+    answer questions about the portfolio.
 
-Responsibilities:
-  * Format a Markdown trade-proposal card from the interrupt payload.
-  * Attach inline approval buttons:
-      - [ ✅ Approve Trade ]  -> resume the LangGraph thread with "APPROVED"
-      - [ ❌ Reject ]          -> resume with "REJECTED"
-  * Wire button callbacks back into `graph.resume_symbol(...)`.
-  * Commands: /scan, /run SYMBOL, /trades.
-  * Free-text messages are routed to the conversational research agent
-    (app/chat_agent.py), which is read/trigger-only.
-
-The bot is a thin transport layer: it never computes prices or sizes. It only
-forwards the human's decision into the graph.
+Security invariant: The bot only responds to `TELEGRAM_CHAT_ID`.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.error import NetworkError
 from telegram.ext import (
     Application,
@@ -42,11 +44,14 @@ from telegram.ext import (
 from app import chat_agent, executor, universe
 from config.settings import get_settings
 
+if TYPE_CHECKING:
+    import asyncio
+
 logger = logging.getLogger(__name__)
 
 
 def _is_authorized(update: Update) -> bool:
-    """Allow only the configured operator's direct chat."""
+    """True only if the message comes from the operator's configured chat id."""
     chat = getattr(update, "effective_chat", None)
     configured = get_settings().TELEGRAM_CHAT_ID
     return chat is not None and bool(configured) and str(chat.id) == configured
@@ -68,8 +73,8 @@ async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE)
         return
     logger.exception("Telegram update failed: %s", error)
 
-# Callback data prefixes. The symbol is appended after the colon so a single
-# callback handler can dispatch on the action.
+
+# Callback data prefixes.
 APPROVE = "approve"
 REJECT = "reject"
 
@@ -103,14 +108,7 @@ def _build_keyboard(symbol: str) -> InlineKeyboardMarkup:
 
 
 def _auto_configure_chat_id(chat_id: int) -> bool:
-    """Persist the operator's chat id to `.env` if it differs from config.
-
-    A bot cannot discover the operator's chat id until the operator messages
-    it, so the first `/start` is used to self-configure. Writes via a
-    temp-file-then-rename so a crash mid-write never corrupts `.env`, and
-    clears the cached `Settings` so this same process picks up the new value
-    immediately (no restart needed).
-    """
+    """Persist the operator's chat id to `.env` if it differs from config."""
     settings = get_settings()
     if settings.TELEGRAM_CHAT_ID and str(chat_id) != settings.TELEGRAM_CHAT_ID:
         logger.warning(
@@ -120,13 +118,14 @@ def _auto_configure_chat_id(chat_id: int) -> bool:
         return False
     if str(chat_id) == settings.TELEGRAM_CHAT_ID:
         return False
+
+    env_path = Path(".env")
     try:
-        env_path = Path(".env")
         lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
         replaced = False
         for i, line in enumerate(lines):
             stripped = line.strip()
-            if stripped.startswith("#") or "=" not in stripped:
+            if stripped.startswith("#") or not stripped:
                 continue
             key = stripped.split("=", 1)[0].strip()
             if key == "TELEGRAM_CHAT_ID":
@@ -164,16 +163,18 @@ async def _on_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else ""
     )
     await message.reply_text(
-        "\U0001F916 NIFTY 100 Swing Trading Assistant online.\n"
-        "Commands:\n"
-        "/scan — screen the NIFTY 100 universe & push proposals\n"
-        "/run SYMBOL — run one symbol through the pipeline\n"
-        "/trades — show the audit log (open & closed paper trades)\n"
-        "/pending — list proposals awaiting your approval\n"
-        "/status — show read-only system health\n"
+        "🤖 *NIFTY 100 Swing Trading Assistant online.*\n\n"
+        "*Commands:*\n"
+        "• `/scan` — Screen the NIFTY 100 universe & push proposals\n"
+        "• `/run SYMBOL` — Run one symbol through the pipeline\n"
+        "• `/trades` — Show the audit log (open & closed paper trades)\n"
+        "• `/pending` — List proposals awaiting your approval\n"
+        "• `/performance` — Show paper performance scorecard & alpha\n"
+        "• `/status` — Show read-only system health\n\n"
         "Approve / reject proposals via the inline buttons.\n"
-        "Or just ask me anything in plain text — e.g. 'why did TITAN qualify?',\n"
-        "'what are my open trades?', 'status of JSWSTEEL'." + note
+        "Or just ask me anything in plain text — e.g. 'why did TITAN qualify?', "
+        "'what are my open trades?', 'status of JSWSTEEL'." + note,
+        parse_mode="Markdown",
     )
 
 
@@ -205,12 +206,7 @@ def _format_trades() -> str:
 
 
 def _run_pipeline_in_thread(update: Update, symbol: Optional[str]) -> None:
-    """Run the (blocking) pipeline off the event loop, then report back.
-
-    The pipeline does yfinance downloads + LLM calls, which can take minutes.
-    Running it on the bot's event loop would stall polling, so it goes on a
-    worker thread. Proposals are pushed to Telegram by the pipeline itself.
-    """
+    """Run the (blocking) pipeline off the event loop, then report back."""
 
     def _work() -> None:
         from app import pipeline
@@ -302,6 +298,20 @@ async def _on_pending(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await message.reply_text(_format_pending(), parse_mode="Markdown")
 
 
+async def _on_performance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /performance — show paper trading performance scorecard & alpha."""
+    if await _reject_unauthorized(update):
+        return
+    from app import evaluation
+
+    message = update.effective_message
+    if message is not None:
+        trades = executor.fetch_all_trades()
+        summary = evaluation.summarize_trades(trades)
+        report = evaluation.format_performance_report(summary)
+        await message.reply_text(report, parse_mode="Markdown")
+
+
 async def _on_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /status — show read-only operational health."""
     if await _reject_unauthorized(update):
@@ -339,12 +349,9 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         await query.edit_message_text(f"⚠️ Unknown action: {action}")
 
-async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route free-text messages to the conversational research agent.
 
-    The agent is blocking (LLM + possibly yfinance), so it runs on a worker
-    thread; the reply is delivered back on the bot's event loop.
-    """
+async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route free-text messages to the conversational research agent."""
     if await _reject_unauthorized(update):
         return
     message = update.effective_message
@@ -356,9 +363,7 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     await message.reply_text("🤔 Thinking…")
 
-
     def _work() -> None:
-
         thread_id = f"telegram-chat-{chat.id}"
         answer = chat_agent.ask(question, thread_id=thread_id)
         if _bot_loop is not None:
@@ -372,14 +377,8 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboardMarkup) -> bool:
-    """Push a proposal directly via the Telegram Bot API over HTTP.
-
-    Used when the long-polling bot is NOT running in this process (e.g.
-    `scan`/`run` invoked separately from `serve`). A plain HTTPS POST to
-    `sendMessage` needs no event loop and works from any process.
-    """
+    """Push a proposal directly via the Telegram Bot API over HTTP."""
     import json
-
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     body = {
@@ -390,8 +389,6 @@ def _send_via_bot_api(token: str, chat_id: str, text: str, markup: InlineKeyboar
     }
     resp = _post_telegram_message(url, body)
     if resp.status_code == 400:
-        # Markdown parse failure (e.g. special chars in the LLM thesis) —
-        # retry as plain text so the proposal is never lost.
         body.pop("parse_mode")
         resp = _post_telegram_message(url, body)
     if resp.status_code != 200:
@@ -409,14 +406,7 @@ def _post_telegram_message(url: str, body: dict) -> Any:
 
 
 def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
-    """Push a proposal card (with buttons) to the configured chat.
-
-    Called from `main.py` when a thread pauses at `human_approval`.
-
-    If the long-polling bot is running in this process, the message goes
-    through its event loop; otherwise it falls back to a direct Bot API
-    HTTP call so `scan`/`run` work even when `serve` runs elsewhere.
-    """
+    """Push a proposal card (with buttons) to the configured chat."""
     settings = get_settings()
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         logger.warning("Telegram not configured; cannot push proposal for %s.", payload.get("symbol"))
@@ -428,9 +418,6 @@ def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
     if _running_application is None:
         return _send_via_bot_api(settings.TELEGRAM_BOT_TOKEN, chat_id, text, markup)
 
-    # This helper is invoked from a non-async context (pipeline worker thread
-    # or CLI process). Schedule the send on the bot's own event loop so the
-    # httpx client is always used from the loop it was created on.
     import asyncio
 
     async def _push() -> None:
@@ -445,17 +432,11 @@ def send_proposal_to_chat(chat_id: str, payload: dict) -> bool:
         asyncio.run_coroutine_threadsafe(_push(), _bot_loop)
         return True
     else:
-        # Bot loop not available (e.g. called from a separate CLI process
-        # before start_bot ran) — fall back to a direct Bot API HTTP call.
         return _send_via_bot_api(settings.TELEGRAM_BOT_TOKEN, chat_id, text, markup)
 
 
 def notify_text(chat_id: str, text: str) -> None:
-    """Push a plain Markdown text notification (no buttons) to the operator.
-
-    Used for out-of-band notices that aren't tied to a trade proposal, e.g.
-    the monthly universe-refresh diff or the position-monitor close summary.
-    """
+    """Push a plain Markdown text notification (no buttons) to the operator."""
     settings = get_settings()
     if not settings.TELEGRAM_BOT_TOKEN or not chat_id:
         logger.warning("Telegram not configured; cannot send notification.")
@@ -479,12 +460,8 @@ def notify_text(chat_id: str, text: str) -> None:
             logger.error("Telegram notification failed: HTTP %s %s", resp.status_code, resp.text)
 
 
-# Backwards-compatible alias for older internal callers.
 _send_proposal_to_chat = send_proposal_to_chat
-
-# Set by start_bot() so send_proposal_to_chat can reach the live application.
 _running_application: Optional[Application] = None
-# The bot's event loop, captured in start_bot() for thread-safe scheduling.
 _bot_loop: Optional["asyncio.AbstractEventLoop"] = None
 
 
@@ -501,8 +478,7 @@ _HEARTBEAT_PATH = Path("data/bot_heartbeat")
 
 
 async def _write_heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """JobQueue tick: touch a heartbeat file so the Docker healthcheck can
-    detect a hung polling loop, not just a dead process."""
+    """JobQueue tick: touch a heartbeat file so the Docker healthcheck can detect a hung polling loop."""
     try:
         _HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
         _HEARTBEAT_PATH.write_text(str(time.time()), encoding="utf-8")
@@ -514,11 +490,7 @@ async def _write_heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def start_bot() -> None:
-    """Build and start the long-polling Telegram bot (blocking).
-
-    Long polling means the bot opens outbound HTTPS connections to Telegram,
-    so it works from a private Docker network with no inbound ports.
-    """
+    """Build and start the long-polling Telegram bot (blocking)."""
     global _bot_loop, _running_application
     settings = get_settings()
     if not settings.TELEGRAM_BOT_TOKEN:
@@ -533,12 +505,11 @@ def start_bot() -> None:
     application.add_handler(CommandHandler("run", _on_run))
     application.add_handler(CommandHandler("trades", _on_trades))
     application.add_handler(CommandHandler("pending", _on_pending))
+    application.add_handler(CommandHandler("performance", _on_performance))
     application.add_handler(CommandHandler("status", _on_status))
     application.add_handler(CallbackQueryHandler(_on_callback))
-    # Free text (non-command) goes to the conversational research agent.
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
     application.add_error_handler(_on_telegram_error)
-    # Capture the loop as soon as it starts so other threads can schedule work.
     application.post_init = _capture_loop
     if application.job_queue is not None:
         application.job_queue.run_repeating(_write_heartbeat, interval=30, first=0)
@@ -549,7 +520,6 @@ def start_bot() -> None:
     finally:
         _running_application = None
         _bot_loop = None
-
 
 
 def stop_bot() -> None:
