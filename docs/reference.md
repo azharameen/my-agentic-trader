@@ -9,14 +9,14 @@ limits, fallback, and validation behavior here before implementation.
 | Source | Data | Access | Key | Cost | Trust and use |
 | --- | --- | --- | --- | --- | --- |
 | NSE Indices | NIFTY 100 constituents, industry, ISIN | Public CSV | No | Free | Primary universe source |
-| Yahoo Finance via `yfinance` | Daily OHLCV | Python library/public endpoint | No | Free | Current price baseline; validate and cache |
+| Yahoo Finance via `yfinance` | Daily OHLCV & Macro Indices (`^NSEI`, `^INDIAVIX`) | Python library/public endpoint | No | Free | Price baseline and macro regime context; validate and cache |
 | Economic Times RSS | Market headlines | RSS | No | Free | Candidate news evidence |
 | Moneycontrol RSS | Business headlines | RSS | No | Free | Candidate news evidence |
 | Business Standard RSS | Market headlines | RSS | No | Free | Candidate news evidence |
-| OpenAI-compatible endpoint | Structured qualitative analysis | HTTP API | `OPENAI_API_KEY` | Depends on provider | Optional; never source of numeric facts |
+| Multi-Provider LLM (OpenAI, Gemini, Anthropic, Groq, Gateway) | Qualitative research analysis (Bear, Bull, Synthesizer) | HTTP APIs via native LangChain adapters | Provider-specific API key | Depends on provider | Qualitative analysis only; never source of numeric facts (ADR-003, ADR-022) |
 | Telegram Bot API | Human review and notifications | Bot API | `TELEGRAM_BOT_TOKEN` | Free | Control plane only |
-| SQLite | Audit, checkpoints, outbox | Local database | No | Free | System record |
-| Evidence snapshot store | Normalized evidence and provenance | SQLite | No | Free | Immutable per-run research record |
+| PostgreSQL 16 (`trader_db`) | Audit log, checkpoints, store, outbox, cache | PostgreSQL connection pool | `DATABASE_URL` | Free (sidecar) | Unified system record (ADR-023) |
+| Evidence snapshot store | Normalized evidence and provenance | PostgreSQL | `DATABASE_URL` | Free | Immutable per-run research record |
 
 ## Candidate Symbol-Master Sources
 
@@ -73,28 +73,44 @@ persisted.
   work.
 - Invalidate caches on source freshness changes, model/provider changes, or
   strategy/configuration changes. Cache entries use configurable TTLs and live
-  in the existing audit SQLite database.
+  in the PostgreSQL database (`research_cache` table).
 
-Local database operations:
+PostgreSQL database operations (ADR-023):
 
-- `python -m app.main check-databases` runs `PRAGMA integrity_check` against the
-  audit and checkpoint databases.
-- `python -m app.main backup-databases` creates timestamped consistent copies in
-  `DATABASE_BACKUP_DIR`.
-- Retention deletion, archival, and PostgreSQL/Supabase migration are not yet
-  enabled.
+- PostgreSQL runs as a sidecar container via `docker-compose.yml` (`postgres:16-alpine`).
+- Checkpoints and durable interrupts are persisted via `langgraph-checkpoint-postgres` (`PostgresSaver`).
+- Long-term memory is persisted via `langgraph.store.postgres` (`PostgresStore`).
+- Standard PostgreSQL connection string configured via `DATABASE_URL` in `.env`.
 
-Paper evaluation:
+Market macro indicators (ADR-011):
 
-- `python -m app.main evaluate` reports closed/open counts, gross and net P&L,
-  modeled costs, win rate, expectancy, drawdown, and grouped attribution.
+- Sourced automatically from Yahoo Finance (`^NSEI` and `^INDIAVIX`).
+- India VIX > 24.0: Blocks new paper trade entries (`allow_new_entries = False`, `risk_multiplier = 0.0`).
+- India VIX in [19.0, 24.0]: Halves trade risk budget (`allow_new_entries = True`, `risk_multiplier = 0.5`).
+- NIFTY 50 close < 50-day EMA: Blocks long pullback entries (`allow_new_entries = False`).
+
+Multi-strategy screening (ADR-024):
+
+- Supported strategies: `pullback_in_uptrend`, `breakout_momentum`, `bollinger_mean_reversion`.
+- Priority hierarchy for candidates matching multiple setups: `BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`.
+- Exactly one clean proposal card is pushed to Telegram per ticker per day.
+
+Paper evaluation & benchmark:
+
+- `python -m app.main evaluate` and Telegram `/performance` report closed/open counts,
+  gross and net P&L, transaction costs, win rate, expectancy, max drawdown,
+  Profit Factor (Gross Wins / Gross Losses), and Realized R-Multiple.
+- Benchmark comparator: Net alpha compared against the NIFTY 100 Buy-and-Hold
+  return across the identical active paper trading duration.
+- Statistical validity rule: A minimum of 30 closed trades is required before
+  interpreting Sharpe ratios or win-rate confidence intervals.
 - Evaluation is read-only. It does not tune strategies, thresholds, or risk.
 
 Operational status:
 
 - Telegram `/status` reports trading mode, provider/model configuration status,
   scan schedule, pending approvals, open paper trades, cache size, outbox
-  backlog, database integrity, and bot heartbeat.
+  backlog, database connection status, and bot heartbeat.
 - The command is read-only and does not alter approvals, execution, or settings.
 
 Scan measurement:
@@ -172,7 +188,7 @@ empty.
 | --- | --- | --- |
 | Dynamic graph fan-out | Installed LangGraph `Send` API | Planned; requires reducer and orchestration tests |
 | LangSmith tracing | `langsmith` SDK (already installed, transitive dependency of `langchain-core`); `LANGSMITH_API_KEY` | Implemented, off by default — see ADR-021 and "LangSmith Tracing Setup" below |
-| Long-term memory store | `langgraph.store.sqlite.SqliteStore` (bundled with `langgraph-checkpoint-sqlite`, already installed) | Implemented; backs `app.profile` via `app.store` |
+| Long-term memory store | `langgraph.store.postgres.PostgresStore` (via `langgraph-checkpoint-postgres`) | Implemented; backs `app.profile` via `app.store` |
 | Time-travel history | `get_state_history()` (built into `langgraph`) | Implemented; `graph.symbol_history`, `history` CLI, `get_symbol_history` chat tool |
 | Durability tuning | `durability="sync"` graph invocation argument (built into `langgraph`) | Implemented for `run_symbol`/`resume_symbol` |
 | Event-streaming scan progress | `graph.stream_events` / `stream_mode="updates"` | Evaluate as a follow-up; not yet implemented |

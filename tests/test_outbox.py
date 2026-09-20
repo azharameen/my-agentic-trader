@@ -1,8 +1,10 @@
+"""Unit tests for the notification outbox (app/outbox.py)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app import outbox
+from app import db, outbox
 from app.state import ProposalCard
 
 
@@ -30,13 +32,11 @@ def test_enqueue_serializes_pydantic_payload_as_mapping():
 
 def test_delivery_unwraps_legacy_double_encoded_mapping():
     outbox.init_db()
-    with outbox.sqlite3.connect(outbox._db_path()) as conn:
-        conn.execute(
-            "INSERT INTO notification_outbox "
-            "(event_id, event_type, recipient, payload, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("legacy", "TRADE_PROPOSAL", "chat", '"{\\"symbol\\": \\"TITAN\\"}"', "2026-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
+    db.execute(
+        "INSERT INTO notification_outbox "
+        "(event_id, event_type, recipient, payload, created_at) VALUES (%s, %s, %s, %s, %s)",
+        ("legacy", "TRADE_PROPOSAL", "chat", '"{\\"symbol\\": \\"TITAN\\"}"', "2026-01-01T00:00:00+00:00"),
+    )
 
     captured = []
     outbox.deliver_pending(lambda recipient, payload: captured.append(payload) or True)
@@ -46,20 +46,18 @@ def test_delivery_unwraps_legacy_double_encoded_mapping():
 
 def test_delivery_quarantines_unrecoverable_legacy_payload():
     outbox.init_db()
-    with outbox.sqlite3.connect(outbox._db_path()) as conn:
-        conn.execute(
-            "INSERT INTO notification_outbox "
-            "(event_id, event_type, recipient, payload, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("poison", "TRADE_PROPOSAL", "chat", "symbol='TITAN'", "2026-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
+    db.execute(
+        "INSERT INTO notification_outbox "
+        "(event_id, event_type, recipient, payload, created_at) VALUES (%s, %s, %s, %s, %s)",
+        ("poison", "TRADE_PROPOSAL", "chat", "symbol='TITAN'", "2026-01-01T00:00:00+00:00"),
+    )
 
     assert outbox.deliver_pending(lambda recipient, payload: True) == 0
-    with outbox.sqlite3.connect(outbox._db_path()) as conn:
-        row = conn.execute(
-            "SELECT quarantined_at, error FROM notification_outbox WHERE event_id = ?",
-            ("poison",),
-        ).fetchone()
-    assert row[0] is not None
-    assert "Expecting value" in row[1]
+    row = db.fetchone(
+        "SELECT quarantined_at, error FROM notification_outbox WHERE event_id = %s",
+        ("poison",),
+    )
+    assert row is not None
+    assert row["quarantined_at"] is not None
+    assert "Expecting value" in row["error"]
     assert outbox.pending() == []

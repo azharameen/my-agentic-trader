@@ -112,12 +112,15 @@ Agents remain read-only with deterministic tool outputs.
 Optional Groww read-only synchronization, exposure-aware research, paper-trade
 analytics, attribution, and regression datasets.
 
-### Phase 5: Safe orchestration modernization
+### Phase 5: Safe orchestration and persistence modernization
 
-CI and lifecycle hardening, reducer-safe graph state, measured parallel research
-fan-out, richer market-context inputs, specialized qualitative analyst roles,
-and realistic paper transaction-cost accounting. SQLite remains the persistence
-system; live broker execution remains excluded.
+CI and lifecycle hardening, reducer-safe graph state, PostgreSQL unified
+persistence sidecar (ADR-023), automated Yahoo Finance market-regime macro
+gates (`^NSEI` and `^INDIAVIX`, ADR-011), sequential multi-agent research
+subgraph with early exit (Bear Risk Critic -> Bull Momentum -> Synthesis Arbiter,
+ADR-022), multi-strategy simultaneous screening (`BREAKOUT`, `PULLBACK`,
+`MEAN_REVERSION`, ADR-024), and realistic paper transaction-cost accounting. Live
+broker execution remains strictly excluded (ADR-002).
 
 ## Success Metrics
 
@@ -126,28 +129,27 @@ system; live broker execution remains excluded.
 - Cross-source disagreement rate for prices and events.
 - Research report citation coverage.
 - False-positive and false-negative rates by strategy and catalyst class.
-- Paper-trade expectancy, drawdown, and outcome attribution.
+- Paper-trade expectancy, drawdown, Profit Factor, Realized R-Multiple, and outcome attribution.
+- Strategy net alpha compared against the NIFTY 100 Buy-and-Hold benchmark over the identical active trading window (minimum 30 closed trades for statistical validity).
 - Zero live orders and zero LLM-generated risk numbers.
 - Paper P&L includes delivery transaction costs and reports gross versus net
   results.
-- When an approved India VIX/NIFTY context assessment is supplied, extreme
-  conditions deterministically block new paper proposals before individual-
-  symbol research. Live index ingestion remains deferred pending source and
-  threshold approval.
+- India VIX and NIFTY 50 EMA macro context deterministically blocks or resizes
+  paper proposals before individual-symbol research (VIX > 24 blocks, VIX 19-24
+  halves risk, NIFTY < 50 EMA blocks long pullbacks).
 
 ## Implemented Foundation
 
 - Multi-provider LLM selection is startup-only and fail-closed.
 - Telegram is restricted to the configured single operator, including approval
   callbacks.
-- Technical, news, and catalyst artifacts use configurable SQLite TTL caching.
+- Technical, news, and catalyst artifacts use configurable TTL caching.
 - Technical and evidence cache reuse are recorded in paper-trade attribution.
-- SQLite audit/checkpoint integrity checks and timestamped backups are available.
+- Relational data, checkpoints, and store are unified under PostgreSQL with sidecar deployment.
 - Evidence freshness and OHLCV shape validation are configurable and tested.
 - Paper outcome evaluation is available through the `evaluate` CLI command and
-  reports metrics without changing strategy or risk configuration.
+  Telegram `/performance`, reporting metrics without changing strategy or risk configuration.
 - Read-only operational health is available through Telegram `/status`.
-- Paper outcome evaluation is available through the `evaluate` CLI command.
 - Scan timing is measured before any concurrency optimization is enabled.
 
 ## Next-Release Scope

@@ -39,7 +39,6 @@ from langchain.agents.middleware import (
     SummarizationMiddleware,
     ToolCallLimitMiddleware,
 )
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from app import checkpoint, executor, graph, pipeline, screener, store
 from app.llm import build_chat_model, is_configured
@@ -147,7 +146,7 @@ def get_symbol_history(symbol: str) -> str:
     return json.dumps(history, indent=2, default=str)
 
 
-def _get_checkpointer() -> SqliteSaver:
+def _get_checkpointer() -> Any:
     """Return the shared long-lived checkpointer."""
     return checkpoint.get_checkpointer()
 

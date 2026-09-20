@@ -1,48 +1,20 @@
-"""SQLite outbox for at-least-once Telegram proposal delivery."""
+"""Outbox pattern for at-least-once Telegram proposal delivery (ADR-023)."""
 
 from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable
 
-from config.settings import get_settings
+from app import db
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS notification_outbox (
-    event_id    TEXT PRIMARY KEY,
-    event_type  TEXT NOT NULL,
-    recipient   TEXT NOT NULL,
-    payload     TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    delivered_at TEXT,
-    quarantined_at TEXT,
-    error TEXT
-);
-"""
-
-
-def _db_path() -> Path:
-    path = Path(get_settings().DATABASE_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 def init_db() -> None:
-    with sqlite3.connect(_db_path()) as conn:
-        conn.executescript(_SCHEMA)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(notification_outbox)")}
-        if "quarantined_at" not in columns:
-            conn.execute("ALTER TABLE notification_outbox ADD COLUMN quarantined_at TEXT")
-        if "error" not in columns:
-            conn.execute("ALTER TABLE notification_outbox ADD COLUMN error TEXT")
-        conn.commit()
+    db.init_all_tables()
 
 
 def enqueue(event_type: str, recipient: str, payload: object) -> str:
@@ -52,42 +24,33 @@ def enqueue(event_type: str, recipient: str, payload: object) -> str:
         payload = payload.model_dump(mode="json")
     if not isinstance(payload, dict):
         raise TypeError("Outbox payload must be a mapping or Pydantic model")
-    with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
-            "INSERT INTO notification_outbox (event_id, event_type, recipient, payload, created_at) VALUES (?, ?, ?, ?, ?)",
-            (event_id, event_type, recipient, json.dumps(payload, default=str), datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
+    db.execute(
+        "INSERT INTO notification_outbox (event_id, event_type, recipient, payload, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (event_id, event_type, recipient, json.dumps(payload, default=str), datetime.now(timezone.utc).isoformat()),
+    )
     return event_id
 
 
 def pending() -> list[dict]:
     """Return undelivered notifications in creation order."""
-    with sqlite3.connect(_db_path()) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT * FROM notification_outbox "
-            "WHERE delivered_at IS NULL AND quarantined_at IS NULL ORDER BY created_at"
-        ).fetchall()
-    return [dict(row) for row in rows]
+    return db.fetchall(
+        "SELECT * FROM notification_outbox "
+        "WHERE delivered_at IS NULL AND quarantined_at IS NULL ORDER BY created_at"
+    )
 
 
 def mark_delivered(event_id: str) -> None:
-    with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
-            "UPDATE notification_outbox SET delivered_at = ? WHERE event_id = ?",
-            (datetime.now(timezone.utc).isoformat(), event_id),
-        )
-        conn.commit()
+    db.execute(
+        "UPDATE notification_outbox SET delivered_at = %s WHERE event_id = %s",
+        (datetime.now(timezone.utc).isoformat(), event_id),
+    )
 
 
 def quarantine(event_id: str, error: str) -> None:
-    with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
-            "UPDATE notification_outbox SET quarantined_at = ?, error = ? WHERE event_id = ?",
-            (datetime.now(timezone.utc).isoformat(), error, event_id),
-        )
-        conn.commit()
+    db.execute(
+        "UPDATE notification_outbox SET quarantined_at = %s, error = %s WHERE event_id = %s",
+        (datetime.now(timezone.utc).isoformat(), error, event_id),
+    )
 
 
 def _decode_payload(raw: str) -> dict:

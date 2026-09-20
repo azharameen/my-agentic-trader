@@ -5,7 +5,7 @@ for NIFTY 100 cash-equity (CNC) swing trading. It screens the universe daily,
 uses an LLM (any OpenAI-compatible endpoint) *only* as a qualitative catalyst filter, enforces
 **deterministic** risk gates (1% max account risk, ATR two-tier stops, R:R ≥ 2.0),
 requires **manual human approval via Telegram** before paper execution, and logs
-every decision to SQLite for post-mortem analysis.
+every decision to PostgreSQL for post-mortem analysis.
 
 > ⚠️ **Not financial advice.** Paper trading is the default and the only
 > supported mode. Live order routing is intentionally blocked until a broker
@@ -24,14 +24,14 @@ every decision to SQLite for post-mortem analysis.
 - **Position monitor** — auto-closes open paper trades on stop/target breach on every `/scan`, so P&L is real.
 - **Human-in-the-Loop** — LangGraph `interrupt()` pauses at trade generation;
   Telegram inline buttons resume with `APPROVED` / `REJECTED` / `KILLED`. Stale proposals (old + price has moved) are rejected on resume instead of executed at outdated levels.
-- **Durable checkpoints** — `SqliteSaver` persists state per trade thread (one per symbol per day); survives restarts.
-- **Full audit trail** — every decision state logged to SQLite; review via `/trades` or `/pending` in Telegram.
-- **Telegram is the whole UI** — no web port; `/scan`, `/run`, `/trades`, `/pending` + approval buttons.
+- **Durable checkpoints** — `PostgresSaver` persists state per trade thread (one per symbol per day); survives restarts.
+- **Full audit trail** — every decision state logged to PostgreSQL (`trade_audit_log`); review via `/trades` or `/pending` in Telegram.
+- **Telegram is the whole UI** — no web port; `/scan`, `/run`, `/trades`, `/pending`, `/performance` + approval buttons.
 - **Automatic daily scan + monthly universe refresh** — wired into `apscheduler` inside `serve`.
 - **Phase 3 observability foundation** — OpenTelemetry spans cover pipeline scans and graph runs; enable console export only when debugging.
 - **Phase 4 strategy seam** — deterministic setup filters resolve through `SETUP_STRATEGY`, preserving the current filter while making new indicator strategies swappable.
-- **Phase 5 reliability boundaries** — broker adapter protocol keeps paper execution separate from a fail-closed LIVE placeholder, and a SQLite outbox retries Telegram proposal delivery after failures.
-- **Zero cloud cost** — runs entirely in local Docker.
+- **Phase 5 reliability boundaries** — broker adapter protocol keeps paper execution separate from a fail-closed LIVE placeholder, and a PostgreSQL outbox retries Telegram proposal delivery after failures.
+- **Zero cloud cost** — runs entirely in local Docker with PostgreSQL 16 Alpine sidecar.
 
 ---
 
@@ -39,7 +39,7 @@ every decision to SQLite for post-mortem analysis.
 
 ```text
 trading_agent/
-├── data/                   # SQLite audit DB + checkpoints + universe cache (persistent volume)
+├── data/                   # Runtime data & universe cache (persistent volume)
 ├── logs/                   # Application logs
 ├── tests/                  # pytest suite (risk, screener, universe, graph, monitor)
 ├── config/
@@ -47,6 +47,9 @@ trading_agent/
 │   └── universe/
 │       └── nifty100_seed.csv   # Committed fallback NIFTY 100 snapshot
 ├── app/
+│   ├── db.py               # PostgreSQL connection pool & unified storage abstraction
+│   ├── checkpoint.py       # LangGraph PostgresSaver lifecycle
+│   ├── store.py            # LangGraph PostgresStore lifecycle
 │   ├── state.py            # TypedDict state + Pydantic models
 │   ├── universe.py         # NIFTY 100 constituent list: live fetch + cache + seed fallback
 │   ├── screener.py         # yfinance + pandas technical screening (parallelized)
@@ -55,7 +58,7 @@ trading_agent/
 │   ├── risk.py             # Deterministic ATR stops & 1% sizing
 │   ├── monitor.py          # Auto-closes open paper trades on stop/target breach
 │   ├── telegram_bot.py     # Long-polling bot: HITL buttons + /scan /run /trades /pending + chat
-│   ├── executor.py         # Paper fills + SQLite audit recorder
+│   ├── executor.py         # Paper fills + PostgreSQL audit recorder
 │   ├── graph.py            # LangGraph compilation, checkpoints, interrupts
 │   ├── pipeline.py         # Shared scan/run orchestration (CLI + bot)
 │   ├── chat_agent.py       # Conversational research agent (ReAct, read/trigger-only)
@@ -71,7 +74,8 @@ trading_agent/
 │   ├── prd.md
 │   ├── reference.md
 │   ├── architecture-decisions.md
-│   └── tasks.md
+│   ├── tasks.md
+│   └── sdlc-process.md
 ├── ARCHITECTURE.md             # compatibility link to docs/architecture.md
 └── README.md
 ```
@@ -97,13 +101,13 @@ cp .env.example .env
 #    Edit .env: set OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL,
 #    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-# 2. Build and run the single service
+# 2. Build and run the services (app + PostgreSQL 16 sidecar)
 docker compose up --build
 ```
 
 The `trading-engine` service runs the LangGraph pipeline and the Telegram
-long-polling bot. **Telegram is the complete UI** — message the bot `/start`,
-then use `/scan`, `/run SYMBOL`, and `/trades` (see below). No ports are
+long-polling bot, backed by the `postgres` sidecar container. **Telegram is the complete UI** — message the bot `/start`,
+then use `/scan`, `/run SYMBOL`, `/performance`, and `/trades` (see below). No ports are
 exposed; long polling is outbound-only.
 
 ---
@@ -130,18 +134,12 @@ python -m app.main run RELIANCE
 # Start scheduler + Telegram bot (long-running)
 python -m app.main serve
 
-# Check and back up local SQLite databases
+# Check database integrity
 python -m app.main check-databases
-python -m app.main backup-databases
 
 # Evaluate paper-trade outcomes
 python -m app.main evaluate
 ```
-
-Press `Ctrl+C` once to stop the scheduler and Telegram polling gracefully. The
-process waits briefly for the bot thread to close before exiting. If an older
-process was started before this lifecycle fix, terminate that process once and
-restart it to load the new shutdown behavior.
 
 ---
 
@@ -153,6 +151,9 @@ restart it to load the new shutdown behavior.
 | `python -m app.main run <SYMBOL>` | Run a single symbol through the graph (testing / manual review). |
 | `python -m app.main refresh-universe` | Force a live refresh of the NIFTY 100 constituent list and report the diff. |
 | `python -m app.main serve` | Start the daily scheduler (auto scan + monthly universe refresh) and the Telegram long-polling bot. |
+| `python -m app.main check-databases` | Check PostgreSQL database integrity and table liveness. |
+| `python -m app.main evaluate` | Evaluate paper-trade outcomes against the benchmark. |
+| `python -m app.main history <SYMBOL>` | View time-travel checkpoint step history for a symbol. |
 
 ## Telegram Commands (the complete UI)
 
@@ -163,6 +164,7 @@ restart it to load the new shutdown behavior.
 | `/run SYMBOL` | Run one symbol through the pipeline (e.g. `/run RELIANCE`). |
 | `/trades` | Show the audit log: open/closed paper trades, fills, P&L. |
 | `/pending` | List every proposal currently awaiting your approval. |
+| `/performance` | Report paper trading performance metrics against NIFTY 100 benchmark. |
 | ✅ / ❌ buttons | Approve / Reject a paused proposal (resumes the LangGraph thread). |
 | Free text | Ask the research agent anything: "why did TITAN qualify?", "what are my open trades?", "run RELIANCE". Read/trigger-only — it can never approve a trade. |
 
@@ -175,9 +177,9 @@ restart it to load the new shutdown behavior.
 3. `app/pipeline.py` pushes a Markdown proposal card to Telegram with inline buttons:
    - **✅ Approve Trade** → resumes with `APPROVED` → paper fill recorded.
    - **❌ Reject** → resumes with `REJECTED` → no order.
-4. The resumed thread completes and the audit row is written to SQLite.
+4. The resumed thread completes and the audit row is written to PostgreSQL.
 
-Because the pause is checkpointed, the approval can arrive after a container
+Because the pause is checkpointed via `PostgresSaver`, the approval can arrive after a container
 restart without losing state.
 
 ---
@@ -189,6 +191,7 @@ See `.env.example` for the full list. Key values:
 | Variable | Default | Description |
 | ---------- | --------- | ------------- |
 | `TRADING_MODE` | `PAPER_TRADING` | `PAPER_TRADING` (safe) or `LIVE` (blocked). |
+| `DATABASE_URL` | `postgresql://trader_admin:trader_secret@localhost:5433/trader_db` | PostgreSQL connection string. |
 | `PORTFOLIO_CAPITAL` | `100000.0` | Total equity in INR. |
 | `RISK_PER_TRADE_PCT` | `0.01` | 1% of equity risked per trade. |
 | `ATR_SOFT_MULT` | `1.5` | Soft stop = entry − 1.5×ATR. |
@@ -201,37 +204,19 @@ See `.env.example` for the full list. Key values:
 | `SCAN_CRON_HOUR` / `SCAN_CRON_MINUTE` | `15` / `45` | Time (IST) of the automatic daily scan inside `serve`. |
 | `SETUP_STRATEGY` | `pullback_in_uptrend` | Deterministic strategy implementation resolved by `app/strategies.py`. |
 | `OTEL_ENABLED` | `false` | Enable OpenTelemetry spans for pipeline and graph operations. |
-| `OTEL_CONSOLE_EXPORTER` | `false` | Print enabled spans to stdout for local debugging. |
 
 ---
 
 ## Testing
 
 ```bash
-pip install pytest
-pytest -q
+python -m pytest -q
 ```
 
 The deterministic risk engine is a pure function and is trivially unit-testable
 (see `tests/test_risk.py`); the same applies to the screener filter, the
 universe fallback chain, graph routing, and the position monitor — all covered
 under `tests/`.
-
-```python
-from app.risk import calculate_risk
-
-# A healthy setup: entry 100, ATR 2.0, capital 100k
-p = calculate_risk("RELIANCE", entry_price=100.0, atr=2.0, portfolio_capital=100_000)
-assert p is not None
-assert p.hard_stop == 95.0          # 100 - 2.5*2
-assert p.soft_stop == 97.0          # 100 - 1.5*2
-assert p.target_price == 110.0      # 100 + 2*(100-95)
-assert p.quantity == 200            # floor(1000 / 5)
-assert p.risk_to_reward == 2.0
-
-# A degenerate setup (ATR too large) should be rejected.
-assert calculate_risk("X", entry_price=10.0, atr=5.0) is None
-```
 
 ---
 
@@ -248,7 +233,7 @@ assert calculate_risk("X", entry_price=10.0, atr=5.0) is None
 
 1. Send `/trades` to the bot for the open/closed trade summary (fills, P&L).
 2. Full per-trade detail (RSI, EMA_200, ATR, LLM thesis, mistake category) is in
-   the `trade_audit_log` table of `data/trading_audit.db`.
+   the `trade_audit_log` table of PostgreSQL.
 
 **Troubleshooting:**
 
@@ -258,11 +243,6 @@ assert calculate_risk("X", entry_price=10.0, atr=5.0) is None
   are *not* generated. This is intentional (fail-safe).
 - **LIVE mode** — the executor raises `RuntimeError` if `TRADING_MODE=LIVE`;
   broker routing is not implemented.
-
-**Phase 3–5 evaluation:** `evals/chat_agent_cases.jsonl` is the initial
-regression fixture for grounded tool use, read-only behavior, and the approval
-boundary. It is intentionally a fixture rather than an automatic LLM judge so
-tests remain deterministic and free of API calls.
 
 ---
 

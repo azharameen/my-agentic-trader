@@ -1,46 +1,52 @@
-"""Shared LangGraph long-term memory store lifecycle.
+"""
+Shared LangGraph long-term memory store lifecycle (ADR-023).
 
-Mirrors `app/checkpoint.py`: a process-wide `SqliteStore` backed by a
-persistent `sqlite3` connection in the same local-first database directory.
-No new infrastructure is introduced — the store uses the same SQLite engine
-already required by ADR-006, and is the native LangGraph abstraction for
-cross-thread, namespaced long-term memory (operator profile, future
-per-symbol research notes) as documented at
-https://docs.langchain.com/oss/python/langgraph/stores.
+Provides PostgreSQL 16 persistence via `PostgresStore` backed by connection pooling.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-from typing import Optional
+import logging
+from typing import Any, Optional
 
-from langgraph.store.sqlite import SqliteStore
+import psycopg
+from langgraph.store.postgres import PostgresStore
+from psycopg.rows import dict_row
 
 from config.settings import get_settings
 
-_store: Optional[SqliteStore] = None
-_connection: Optional[sqlite3.Connection] = None
+logger = logging.getLogger(__name__)
+
+_store: Optional[Any] = None
+_connection: Optional[Any] = None
 
 
-def get_store() -> SqliteStore:
+def get_store() -> PostgresStore:
+    """Return the process-wide PostgresStore instance."""
     global _store, _connection
     if _store is None:
-        db_path = Path(get_settings().STORE_DB_PATH)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        _connection = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
-        _store = SqliteStore(_connection)
+        conninfo = get_settings().DATABASE_URL.get_secret_value()
+        _connection = psycopg.Connection.connect(
+            conninfo, autocommit=True, prepare_threshold=0, row_factory=dict_row
+        )
+        _store = PostgresStore(_connection)
         _store.setup()
+        logger.info("Initialized PostgresStore long-term memory store.")
     return _store
 
 
-def current_connection() -> Optional[sqlite3.Connection]:
+def current_connection() -> Optional[Any]:
+    """Return the underlying active connection used by the store."""
     return _connection
 
 
 def reset() -> None:
+    """Close and clear the store instance and underlying connection."""
     global _store, _connection
     if _connection is not None:
-        _connection.close()
+        try:
+            _connection.close()
+        except Exception:  # noqa: BLE001
+            pass
     _store = None
     _connection = None

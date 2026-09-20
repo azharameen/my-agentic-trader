@@ -1,15 +1,35 @@
 # =============================================================================
-# NIFTY 100 Swing Trading Assistant — Docker Compose
+# NIFTY 100 Swing Trading Assistant — Docker Compose (ADR-023)
 #
-# Single service:
+# Services:
+#   postgres       : PostgreSQL 16 Alpine sidecar persistence layer for
+#                    checkpoints, store, audit logs, outbox, and cache.
 #   trading-engine : LangGraph pipeline + Telegram long-polling bot. Telegram
 #                    is the complete control plane (/scan, /run, /trades,
-#                    approval buttons) — no web port is exposed.
-#
-# The audit DB and checkpoints live on the persistent ./data volume.
+#                    approval buttons, /performance) — no web port is exposed.
 # =============================================================================
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nifty-trading-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trader_db}
+      POSTGRES_USER: ${POSTGRES_USER:-trader_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trader_secret}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader_admin} -d ${POSTGRES_DB:-trader_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-net
+
   trading-engine:
     build:
       context: .
@@ -19,21 +39,22 @@ services:
     command: ["python", "-m", "app.main", "serve"]
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trader_admin}:${POSTGRES_PASSWORD:-trader_secret}@postgres:5432/${POSTGRES_DB:-trader_db}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    # Long polling means no inbound ports are required for Telegram.
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # Verifies both DB connectivity and that the bot's long-poll loop is
-      # alive (it touches data/bot_heartbeat every ~30s); a hung poll loop
-      # (not just a dead process) now fails the healthcheck.
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import app.executor as e, time, pathlib, sys; e.init_db(); p = pathlib.Path('data/bot_heartbeat'); sys.exit(0 if p.exists() and (time.time() - p.stat().st_mtime) < 90 else 1)",
+          "import app.db as db, time, pathlib, sys; db.init_all_tables(); p = pathlib.Path('data/bot_heartbeat'); sys.exit(0 if p.exists() and (time.time() - p.stat().st_mtime) < 90 else 1)",
         ]
       interval: 30s
       timeout: 10s
@@ -41,6 +62,10 @@ services:
       start_period: 30s
     networks:
       - trading-net
+
+volumes:
+  pgdata:
+    driver: local
 
 networks:
   trading-net:

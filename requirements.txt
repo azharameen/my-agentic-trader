@@ -16,7 +16,10 @@ langchain-groq>=0.2.0
 
 # --- LangGraph (state machine, checkpoints, HITL interrupts) ---------------
 langgraph>=0.2.0
-langgraph-checkpoint-sqlite>=1.0.0
+langgraph-checkpoint-postgres>=2.0.0
+
+# --- Persistence (PostgreSQL connection pooling, ADR-023) ------------------
+psycopg[binary,pool]>=3.1.18
 
 # --- Configuration ----------------------------------------------------------
 pydantic>=2.5.0

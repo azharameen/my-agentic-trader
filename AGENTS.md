@@ -1,6 +1,6 @@
 # AGENTS.md — NIFTY 100 Swing Trading Research Assistant
 
-Local-first, containerized decision-support system: deterministic technical screening → LLM catalyst filter (any OpenAI-compatible endpoint via `langchain-openai`; configured through `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`) → deterministic risk gates → human approval via Telegram → paper execution → SQLite audit.
+Local-first, containerized decision-support system: deterministic multi-strategy screening → sequential multi-agent qualitative research filter (Bear Critic, Bull Analyst, Synthesizer via native LangChain providers) → deterministic risk gates → human approval via Telegram → paper execution → PostgreSQL audit (ADR-023).
 
 **Read first:** [README.md](README.md) (setup and CLI), then the canonical
 documentation under [`docs/`](docs/): [architecture](docs/architecture.md),
@@ -8,46 +8,46 @@ documentation under [`docs/`](docs/): [architecture](docs/architecture.md),
 and [tasks](docs/tasks.md). The root `ARCHITECTURE.md` is only a compatibility
 link. Do not duplicate canonical documentation here.
 
-## Documentation-first development
+## Systematic SDLC & Agentic Governance
 
-- Treat `docs/` as the source of truth for product scope, architecture, sources,
-  decisions, and task status.
-- Before coding, move the relevant task to `active` in `docs/tasks.md`.
-- Before review, move it to `inreview` and mark completed checklist items.
-- Do not mark a task `done` until tests and documentation are updated.
-- Update `docs/prd.md` when product scope or acceptance criteria changes.
-- Update `docs/architecture.md` when data flow, boundaries, persistence,
-  agents, or deployment changes.
-- Update `docs/reference.md` before adding or changing an external source, API,
-  credential, MCP, quota, or fallback.
-- Add an ADR to `docs/architecture-decisions.md` for architectural choices,
-  especially anything affecting safety, execution, data authority, or agent
-  permissions.
-- Remove completed tasks from the live task ledger after merge; retain durable
-  decisions in the ADR log.
+All development follows the formal governance lifecycle in [`docs/sdlc-process.md`](docs/sdlc-process.md):
+
+- **Canonical Documentation First:** Treat `docs/` as the single source of truth for product scope, architecture, sources, decisions, and tasks.
+- **Task Lifecycle:** Tasks move through `backlog` → `discuss` → `todo` → `active` → `onhold` → `inreview` → `done` (or `deferred`).
+- **Strict SDLC Gates:**
+  1. *Gate 1 (Planning):* Tasks move to `todo` only when scoped with accepted ADRs and full nested hierarchy (Task → Sub-Tasks → Milestones → Checklists).
+  2. *Gate 2 (Implementation):* Maximum 1–2 `active` tasks at a time. Never start coding without meeting entry criteria.
+  3. *Gate 3 (Verification):* Move to `inreview` only when all checklists are `[x]`, `python -m pytest -q` passes (100%), and `ruff`/`mypy` checks pass.
+  4. *Gate 4 (Completion):* Move to `done` only after synchronizing `prd.md`, `architecture.md`, and `reference.md`.
+- **Folder-Level Rule Enforcement:** Specialized subfolder instructions apply:
+  - [`app/AGENTS.md`](app/AGENTS.md): Pure Python risk math, fail-closed handlers, typed models, secret masking.
+  - [`tests/AGENTS.md`](tests/AGENTS.md): `tmp_path` isolation, external network mocking, deterministic assertions.
+  - [`docs/AGENTS.md`](docs/AGENTS.md): Canonical documentation maintenance, ADR requirements, task ledger formatting.
+  - [`config/AGENTS.md`](config/AGENTS.md): `get_settings()` singleton, `SecretStr` for credentials, `.env.example` synchrony.
 
 ## Commands
 
 ```bash
-python -m app.main scan               # one-shot: scan NIFTY 100, push proposals to Telegram
-python -m app.main run <SYMBOL>       # run a single symbol through the graph (testing)
-python -m app.main refresh-universe   # force a live refresh of the NIFTY 100 constituent list
-python -m app.main serve              # start scheduler + Telegram bot (long-running)
-docker compose up --build             # single service (engine + bot)
-pytest -q                             # unit tests (risk, screener, universe, graph, monitor)
+python -m app.main scan                         # one-shot: scan NIFTY 100, push proposals to Telegram
+python -m app.main run <SYMBOL>                 # run a single symbol through the graph (testing)
+python -m app.main refresh-universe             # force a live refresh of the NIFTY 100 constituent list
+python -m app.main evaluate                     # report paper trading performance against NIFTY 100 benchmark
+python -m app.main serve                        # start scheduler + Telegram bot (long-running)
+docker compose up --build                       # two services (app + postgres:16-alpine sidecar)
+pytest -q                                       # unit tests (risk, screener, universe, graph, monitor)
 ```
 
-**Telegram is the complete control plane** — no web UI/port exists. In the running bot: `/scan` (universe scan), `/run SYMBOL` (single symbol), `/trades` (audit log), `/pending` (proposals awaiting approval), Approve/Reject buttons on proposal cards, and free-text questions routed to the conversational research agent (`app/chat_agent.py`, a ReAct agent that is **read/trigger-only** — it can never approve/reject a trade). The CLI `scan`/`run` do the same via `app/pipeline.py` (shared with the bot — keep them in sync).
+**Telegram is the complete control plane** — no web UI/port exists. In the running bot: `/scan` (universe scan), `/run SYMBOL` (single symbol), `/trades` (audit log), `/pending` (proposals awaiting approval), `/performance` (alpha vs benchmark & metrics), Approve/Reject buttons on proposal cards, and free-text questions routed to the conversational research agent (`app/chat_agent.py`, a ReAct agent that is **read/trigger-only** — it can never approve/reject a trade). The CLI `scan`/`run` do the same via `app/pipeline.py` (shared with the bot — keep them in sync).
 
 - Python 3.11+, plain `pip install -r requirements.txt` (no pyproject/Makefile).
 - `pytest -q` runs the suite under `tests/`. Call `get_settings.cache_clear()` after mutating env vars in a test.
 
 ## Hard invariants — do not break
 
-- **LLM never touches numbers.** `analyst.py` only classifies the *nature* of a drop via `with_structured_output(CatalystAssessment)`. All prices/stops/sizes come from `risk.py` (pure math). Never add LLM output to `TradeProposal`.
+- **LLM never touches numbers.** Qualitative agents (Bear, Bull, Synthesizer) only classify the *nature* and confidence of a setup via structured Pydantic models. All prices/stops/sizes come from `risk.py` (pure math). Never add LLM output to `TradeProposal`.
 - **Fail-closed everywhere.** LLM errors/missing API key → conservative fallback → trade rejected. Per-symbol screener errors are caught and skipped. Keep broad `except` + `# noqa: BLE001` markers where they exist — they are intentional.
-- **Live trading is blocked.** `executor.record_open_trade` raises `RuntimeError` when `TRADING_MODE == "LIVE"`. Paper trading is the only supported mode.
-- **Audit everything.** Every decision state goes to `trade_audit_log` in `data/trading_audit.db`.
+- **Live trading is blocked.** `executor.record_open_trade` raises `RuntimeError` when `TRADING_MODE == "LIVE"`. Paper trading is the only supported mode (ADR-002).
+- **Audit everything.** Every decision state goes to `trade_audit_log` in PostgreSQL (`trader_db`).
 - **No agentic execution.** Research agents may collect, analyze, report, and
   trigger research runs, but may never approve, reject, buy, sell, or mutate
   risk settings. Groww is read-only unless a future ADR explicitly changes
@@ -64,14 +64,13 @@ pytest -q                             # unit tests (risk, screener, universe, gr
 
 ## Gotchas
 
-- `build_graph()` uses a process-wide `SqliteSaver` built from a persistent `sqlite3` connection (`_get_checkpointer()`). **Do not** use `SqliteSaver.from_conn_string()` directly — in the installed `langgraph-checkpoint-sqlite` it returns a *context manager*, not a saver, and `graph.compile(checkpointer=...)` raises `TypeError: Invalid checkpointer`. The helper also creates `data/` if missing.
+- `build_graph()` uses `langgraph-checkpoint-postgres` (`PostgresSaver`) and `langgraph.store.postgres` (`PostgresStore`) backed by a connection pool (`app.db.get_connection_pool()`, ADR-023).
 - yfinance quirks in `screener.py` are load-bearing: `.NS` suffix and MultiIndex column flattening. The screener now computes EMA/RSI/ATR directly with pandas, so `pandas_ta` is no longer a runtime dependency.
 - `telegram_bot.send_proposal_to_chat` is the public proposal-delivery entrypoint used cross-module from `pipeline.py`. When the bot isn't running in-process (e.g. `scan`/`run` separate from `serve`), it falls back to a direct Bot API HTTP POST (`_send_via_bot_api`) — keep that fallback.
 - **`TELEGRAM_CHAT_ID` must be the operator's chat id, not the bot's own id.** Setting it to the bot id (the number in the bot token) makes pushes fail with `403 Forbidden: the bot can't send messages to the bot`. Get your id via @userinfobot or the bot's `getUpdates` after sending `/start`.
 - `KILLED` resume value works via fall-through to `rejected` in `_route_after_approval` (only `APPROVED` is special-cased). The Kill button was removed from the UI (redundant with Reject); `KILLED` is still accepted by `resume_symbol` for backward compatibility.
 - **The Streamlit dashboard was removed** (archived under `legacy/dashboard/`). Telegram is now the only UI. If you ever re-add a web script, it must not be named `app.py` — Streamlit puts the script's directory on `sys.path`, so `dashboard/app.py` shadows the `app/` package and `from app import executor` fails with a circular-import error.
 - **Universe CSVs live in two places on purpose.** `config/universe/nifty100_seed.csv` is committed (config/ isn't gitignored) — the trustworthy fallback baseline. `data/universe/nifty100.csv` is the gitignored, auto-refreshed runtime cache. Never hand-edit either from code; only `app/universe.py` writes the cache.
-- **Checkpointer thread-safety at scale is a known, accepted limitation**, not a bug to "fix" reflexively — the single `sqlite3` connection (`check_same_thread=False`) is fine at single-operator scale; revisit only if `/scan` concurrency issues are actually observed. `pipeline.py` already guards overlapping `/scan` calls with an in-process lock (`ScanInProgressError`).
 
 ## Vestigial — don't assume it works
 

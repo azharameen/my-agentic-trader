@@ -17,7 +17,7 @@ separate Phase 2 source-policy decision, not an implicit implementation task.
 - Missing or failed inputs fail closed for trade proposals.
 - Live trading is blocked. Groww, if integrated, is read-only until a separate
   approved decision changes this constraint.
-- Every decision and paper-trade state is persisted to SQLite.
+- Every decision and paper-trade state is persisted to PostgreSQL (ADR-023).
 - NSE symbols in application state do not include `.NS`.
 - External data must retain source, fetched time, freshness, and validation
   status.
@@ -26,35 +26,88 @@ separate Phase 2 source-policy decision, not an implicit implementation task.
 - Market-data loading rejects missing OHLCV columns, non-numeric values, and
   negative volume before technical indicators are computed.
 
-## Current System
+## Current Architecture
+
+The codebase operates as a local-first, containerized, PostgreSQL-backed
+decision-support assistant:
 
 ```mermaid
 flowchart TD
-    A[Scheduler or Telegram] --> B[Universe Resolver]
-    B --> C[Daily OHLCV Screener]
-    C --> D[RSS News]
-    D --> E[LLM Catalyst Classifier]
-    E --> F[Deterministic Risk Engine]
-    F --> G[Telegram HITL]
-    G --> H[Paper Broker]
-    H --> I[(SQLite Audit)]
+    A[Scheduler or Telegram /scan] --> B[Universe Resolver: app.universe]
+    B --> C[Daily OHLCV Loader: app.market_data]
+    C --> D[Pullback Screener: app.screener]
+    D --> E[News Headlines: app.news RSS]
+    E --> F[Single Catalyst Analyst: app.analyst]
+    F --> G[Deterministic Risk Engine: app.risk]
+    G --> H[Telegram HITL Interrupt: ProposalCard]
+    H --> I[Paper Execution: app.executor]
+    I --> J[(PostgreSQL: trade_audit_log)]
+    H -.-> K[(PostgreSQL Checkpoints: PostgresSaver)]
+    L[Chat Agent: app.chat_agent] -.-> M[(PostgreSQL Store: PostgresStore)]
+```
+
+### Key Architectural Characteristics:
+- **Persistence:** Unified PostgreSQL 16 sidecar container (`trade_audit_log`, `checkpoints`, `store`, `notification_outbox`, `research_cache`, `evidence_snapshots`).
+- **Screening:** Deterministic setup screening computing EMA 200, RSI 14, ATR 14, and 20-day volume average.
+- **Qualitative Analysis:** Monolithic structured LLM call in `app/analyst.py` classifying catalyst context.
+- **Deployment:** Two services (`app` and `postgres:16-alpine` sidecar) managed via Docker Compose.
+- **Risk Engine:** Pure Python deterministic math enforcing ATR stops and 1% risk per trade.
+
+---
+
+## Target Modernized Architecture (To-Be / Phase 6 Blueprint)
+
+Approved by architectural consensus (ADR-011, ADR-022, ADR-023, ADR-024), the system
+evolves into a multi-strategy, multi-agent, containerized platform backed by
+PostgreSQL:
+
+```mermaid
+flowchart TD
+    A[Scheduler or Telegram /scan] --> B[Universe Resolver]
+    B --> C[Multi-Strategy Screener: Breakout / Pullback / Mean Reversion]
+    C --> D{Market Macro Gate: ^NSEI & ^INDIAVIX?}
+    D -->|Fail / Veto| R[Rejected Terminal]
+    D -->|Pass| E[Sequential Multi-Agent Subgraph]
+    
+    subgraph Multi_Agent_Subgraph [Sequential Multi-Agent Research Subgraph]
+        E1[Bear Risk Critic] -->|Early Veto if Conf >= 0.70| R
+        E1 -->|Pass| E2[Bull Momentum Analyst]
+        E2 --> E3[Synthesis Arbiter: Conf >= 0.60?]
+    end
+    
+    E3 -->|Fail| R
+    E3 -->|Pass| F[Deterministic Strategy Risk Engine]
+    F --> G[Telegram HITL Interrupt]
+    G --> H[Paper Broker Execution]
+    H --> I[(PostgreSQL 16 Sidecar: trader_db)]
+    I --- Checkpoints[PostgresSaver: checkpoints & blobs]
+    I --- Store[PostgresStore: operator profile & memory]
+    I --- AuditTable[trade_audit_log & indexes]
     I --> J[Research Chat Agent]
 ```
 
-## Components
+### Key To-Be Advancements:
+1. **Unified Persistence (ADR-023):** Single PostgreSQL 16 sidecar container replaces all SQLite files, eliminating file locks and supporting concurrent multi-process operations.
+2. **Multi-Strategy Simultaneous Screening (ADR-024):** Evaluates Breakout, Pullback, and Mean Reversion setups simultaneously with deterministic priority resolution.
+3. **Macro Regime Filter (ADR-011):** Sourced from Yahoo Finance (`^NSEI`, `^INDIAVIX`). Blocks entries if VIX > 24 or NIFTY < 50 EMA; halves risk if VIX in [19, 24].
+4. **Sequential Multi-Agent Research (ADR-022):** Bear Critic runs first for early exit (saving ~60% LLM cost), followed by Bull Analyst and Synthesis Arbiter.
+5. **Advanced Evaluation & Benchmarking (T-007):** Compares paper alpha against NIFTY 100 Buy-and-Hold with a 30-trade minimum sample size rule, Profit Factor, and Realized R-multiples.
 
-| Area | Current implementation | Planned extension |
-| --- | --- | --- |
-| Universe | Official NIFTY 100 CSV, cache, seed fallback | Broader index and sector universes |
-| Market data | `app/market_data.py` loads validated `yfinance` OHLCV with source timestamps; `app/screener.py` consumes one loader | Additional source adapters, cross-source validation, fallback provider |
-| Technicals | EMA 200, RSI 14, ATR 14, volume average | Regime, breadth, relative strength, multi-timeframe data |
-| News | Three RSS feeds with simple name matching | Announcements, filings, events, deduplication, provenance |
-| Qualitative analysis | Structured LLM catalyst classification | Multi-source research synthesis with citations and confidence |
-| Risk | ATR stops, 1% sizing, R:R gate, deterministic safety flags, delivery-cost math | Exposure, correlation, event, liquidity, and portfolio-level gates |
-| Approval | Telegram inline buttons | Research reports, explicit read-only broker context |
-| Execution | SQLite paper broker | No live execution in current scope |
-| Persistence | Audit DB, checkpoints, outbox, TTL research cache, backups | Retention/archive and PostgreSQL migration |
-| Operations | Docker, scheduler, OpenTelemetry boundary | Health, freshness, data-quality and evaluation metrics |
+---
+
+## Architectural Evolution Matrix
+
+| Area | Current As-Is State | Target To-Be State | Task ID | ADR |
+|---|---|---|---|---|
+| **Persistence** | Unified PostgreSQL 16 sidecar container | PostgreSQL 16 with replication / cold backups | T-026 | ADR-023 |
+| **Screener** | Single strategy (`pullback_in_uptrend`) | Simultaneous multi-strategy (`BREAKOUT`, `PULLBACK`, `MEAN_REVERSION`) | T-028 | ADR-024 |
+| **Macro Gates** | Deterministic evaluator with manual mock | Automated Yahoo Finance `^NSEI` and `^INDIAVIX` live ingestion | T-004 | ADR-011 |
+| **Qualitative Research** | Single monolithic prompt in `analyst.py` | Sequential multi-agent subgraph (Bear $\rightarrow$ Bull $\rightarrow$ Synth) with early exit | T-029 | ADR-022 |
+| **Data Contracts** | Loose dictionaries passing between stages | Typed Pydantic models in `app/models.py` | T-027 | ADR-003 |
+| **Credentials** | Plain `str` fields in `settings.py` | Pydantic `SecretStr` preventing secret leaks | T-027 | ADR-001 |
+| **Concurrency** | Unbounded threads in `telegram_bot.py` | Bounded `ThreadPoolExecutor(max_workers=3)` + tenacity retries | T-030 | ADR-019 |
+| **Evaluation** | Basic net P&L and win rate | NIFTY 100 Buy-and-Hold benchmark, Profit Factor, R-multiples, `/performance` | T-007 | ADR-011 |
+| **Backtesting** | None (paper live forward testing only) | Event-driven walk-forward backtester reusing production pipeline | T-031 | ADR-012 |
 
 ## Target Research Architecture
 
@@ -82,7 +135,7 @@ The target system is a staged, evidence-driven pipeline:
 ## Readiness Constraints
 
 - The evidence snapshot is one immutable record shared by research reports and
-  evaluation; the current implementation persists the snapshot in SQLite.
+  evaluation; the current implementation persists the snapshot in PostgreSQL.
 - Official exchange and index pages are authoritative but are not assumed to be
   stable APIs. Collection must be cache-first, rate-limited, disableable, and
   terms-reviewed.
@@ -99,7 +152,9 @@ The target system is a staged, evidence-driven pipeline:
 - **Data validator:** checks freshness, schema, identity, and conflicts.
 - **Fundamental analyst:** summarizes validated fundamentals and disclosures.
 - **Technical analyst:** reports deterministic indicators and regime context.
-- **Catalyst analyst:** classifies evidence with structured output and citations.
+- **Bear Risk Critic Agent:** adversarial risk analyst testing for governance, debt, promoter pledging, and resistance; holds early veto authority (ADR-022).
+- **Bull Momentum Analyst Agent:** evaluates volume breakout quality, sector rotation tailwinds, and trend strength.
+- **Synthesis Arbiter Agent:** balances bull and bear evidence, assigning objective confidence scores (0-100) and invalidating criteria.
 - **Risk engine:** deterministic Python only; no LLM invocation.
 - **Report writer:** assembles evidence, uncertainty, and decision rationale.
 - **Chat agent:** read/trigger-only; cannot approve, reject, or execute. Built
@@ -113,15 +168,16 @@ The target system is a staged, evidence-driven pipeline:
 - Safe scope includes CI hardening, async lifecycle correctness, typed reducer
   state where needed, research fan-out experiments, richer market context,
   specialized qualitative analysts, and realistic paper-cost accounting.
-- SQLite is the only supported checkpoint, store, and audit persistence system
-  for the current single-operator product. Keep persistence local and avoid
-  adding an external database deployment.
-- LangGraph platform modernization (ADR-019) adopts the native `SqliteStore`
-  for long-term memory, explicit `durability="sync"` on proposal-critical
-  graph invocations, and time-travel history for auditability — all using
-  packages already installed, with no new infrastructure. LangGraph Agent
-  Server deployment, Studio, and hosted LangSmith tracing remain deferred
-  until a separate ADR authorizes external services.
+- PostgreSQL 16 running as a Docker sidecar service (`postgres:16-alpine`) is the
+  unified persistence system for checkpoints, long-term store, audit logs,
+  outbox, and research caching (ADR-023, superseding ADR-006/012/019).
+- Checkpoints use `langgraph-checkpoint-postgres` (`PostgresSaver`) backed by a
+  connection pool (`psycopg_pool.ConnectionPool`), preserving `durability="sync"`.
+- Long-term memory uses `langgraph.store.postgres` (`PostgresStore`).
+- Time-travel auditability is maintained via `graph.symbol_history` and exposed
+  via the `history` CLI and chat-agent tools.
+- Optional LangSmith tracing is supported via `LANGSMITH_TRACING_ENABLED` (ADR-021),
+  failing closed without an API key.
 - The current universe is intentionally narrow. TrAId starts with NIFTY 100 and
   may accept user-provided lists before any broader NSE/BSE security-master work
   is authorized.
@@ -132,10 +188,10 @@ The target system is a staged, evidence-driven pipeline:
 
 - `app.market_data` owns OHLCV loading and provenance so the screener's single-
   symbol and universe paths share the same source seam.
-- `app.checkpoint` owns the process-wide SQLite connection and `SqliteSaver`,
+- `app.checkpoint` owns the process-wide PostgreSQL connection pool and `PostgresSaver`,
   shared by the graph and chat agent.
-- `app.store` owns the process-wide SQLite connection and native LangGraph
-  `SqliteStore`, compiled into the graph via `compile(store=...)`. It backs
+- `app.store` owns the process-wide PostgreSQL connection pool and native LangGraph
+  `PostgresStore`, compiled into the graph via `compile(store=...)`. It backs
   `app.profile` (operator profile) as a genuine long-term-memory namespace
   instead of an ad hoc table, and is the seam for any future cross-thread
   research notes.
@@ -168,12 +224,12 @@ The target system is a staged, evidence-driven pipeline:
 - `app.executor` records gross P&L, transaction costs, and net realized P&L for
   paper trades.
 - Scan outputs and research artifacts are reused when their inputs are unchanged;
-  T-018 provides SQLite-backed TTL cache entries for derived technical
+  T-018 provides PostgreSQL-backed TTL cache entries for derived technical
   snapshots, RSS headlines, catalyst results, and stable evidence snapshots.
   Technical and evidence cache hits are persisted with paper-trade attribution;
   RSS/catalyst cache-hit attribution and raw OHLCV remain follow-up work.
 - `app.evidence` normalizes provenance-bearing market/news items into immutable
-  SQLite evidence snapshots. Graph runs persist the snapshot ID and source set
+  PostgreSQL evidence snapshots. Graph runs persist the snapshot ID and source set
   into paper-trade audit rows. Reuse and cache invalidation remain T-018 work.
 - `app.corporate_events` owns normalized event identity, deterministic
   deduplication, evidence conversion, and the configurable projected-holding
@@ -203,12 +259,10 @@ The target system is a staged, evidence-driven pipeline:
   configured chat id is now enforced for commands, free text, and approval
   callbacks. Current chat history is checkpointed per Telegram chat; T-015
   still needs bounded factual memory and an explicit operator profile.
-- Current SQLite persistence is local-first. T-017 still defines retention and a
-  deliberate PostgreSQL/Supabase migration path; no cloud database is added
-  before the operating flow and reconciliation requirements are proven.
-- Local SQLite maintenance is explicit: `check-databases` runs integrity checks
-  and `backup-databases` creates timestamped consistent copies of the audit and
-  checkpoint databases under `DATABASE_BACKUP_DIR`.
+- Persistence is unified under PostgreSQL 16 (`trader_db`) running as a Docker
+  sidecar container (ADR-023).
+- Database maintenance is explicit: `check-databases` runs PostgreSQL integrity
+  and table liveness checks.
 - `app.evaluation` computes deterministic paper-trade metrics from audit rows;
   evaluation has no permission to change strategy, thresholds, risk, or orders.
 - `app.health` provides read-only operational status. Telegram `/status` uses
@@ -219,15 +273,21 @@ The target system is a staged, evidence-driven pipeline:
 
 ## Persistence
 
-- `data/trading_audit.db`: decisions, proposals, paper trades, source metadata,
-  research reports, and evaluation outcomes.
-- `data/checkpoints.db`: LangGraph state and durable interruptions.
-- `data/store.db`: LangGraph long-term-memory store (operator profile and any
-  future cross-thread research notes), separate from checkpointed short-term
-  thread history.
-- `data/universe/`: runtime universe cache and metadata.
-- Future raw research files should be content-addressed or timestamped and
-  referenced from SQLite rather than embedded in graph state.
+Persistence is unified under PostgreSQL 16 (`trader_db`) running as a Docker
+sidecar container (ADR-023):
+
+- `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`: LangGraph state and
+  durable interrupts managed via `PostgresSaver` with connection pooling.
+- `store`: LangGraph long-term-memory store (operator profile and cross-thread
+  research memory) managed via `PostgresStore`.
+- `trade_audit_log`: Paper-trade fills, net P&L, transaction costs, execution
+  records, and research attribution, indexed on `status`, `timestamp`, and `symbol`.
+- `notification_outbox`: At-least-once Telegram notification delivery queue.
+- `research_cache`: TTL-governed cache for technical snapshots, RSS headlines,
+  and research verdicts.
+- `evidence_snapshots`: Immutable JSON evidence payloads with source provenance.
+- `graph_threads`: Active thread indexing for time-travel queries.
+- `data/universe/`: Runtime local cache for NIFTY 100 constituent CSV files.
 
 ## Failure Policy
 

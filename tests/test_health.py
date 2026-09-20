@@ -1,3 +1,5 @@
+"""Unit tests for operational health checks."""
+
 from __future__ import annotations
 
 from app import health
@@ -28,7 +30,7 @@ def test_format_summary_is_readable():
         "open_paper_trades": 1,
         "cache_entries": 4,
         "pending_notifications": 0,
-        "database_integrity": {"audit": "ok", "checkpoints": "ok"},
+        "database_integrity": {"postgres": "ok"},
         "heartbeat": "not-running",
         "scan_schedule": "15:45 Asia/Kolkata mon-fri",
     })
@@ -36,3 +38,4 @@ def test_format_summary_is_readable():
     assert "PAPER_TRADING" in text
     assert "gemini-test" in text
     assert "Pending approvals: 2" in text
+    assert "postgres=ok" in text

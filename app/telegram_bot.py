@@ -545,10 +545,11 @@ def start_bot() -> None:
 
     logger.info("Starting Telegram long-polling bot...")
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        application.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
     finally:
         _running_application = None
         _bot_loop = None
+
 
 
 def stop_bot() -> None:

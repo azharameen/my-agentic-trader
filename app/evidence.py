@@ -1,17 +1,16 @@
-"""Normalized evidence contracts and immutable snapshot persistence."""
+"""Normalized evidence contracts and immutable snapshot persistence (ADR-023)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app import db
 from config.settings import get_settings
 
 
@@ -63,45 +62,26 @@ def validate_snapshot(snapshot: EvidenceSnapshot, max_age_seconds: Optional[floa
                 raise ValueError(f"Evidence is stale: {item.kind}")
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS evidence_snapshots (
-    snapshot_id TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL,
-    symbol TEXT,
-    payload TEXT NOT NULL
-);
-"""
-
-
-def _db_path() -> Path:
-    path = Path(get_settings().DATABASE_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def init_db() -> None:
-    with sqlite3.connect(_db_path()) as conn:
-        conn.executescript(_SCHEMA)
+    db.init_all_tables()
 
 
 def save_snapshot(snapshot: EvidenceSnapshot) -> str:
-    init_db()
+    db.init_all_tables()
     payload = snapshot.model_dump_json()
-    with sqlite3.connect(_db_path()) as conn:
-        conn.execute(
-            "INSERT INTO evidence_snapshots (snapshot_id, created_at, symbol, payload) VALUES (?, ?, ?, ?)",
-            (snapshot.snapshot_id, snapshot.created_at.isoformat(), snapshot.symbol, payload),
-        )
-        conn.commit()
+    db.execute(
+        "INSERT INTO evidence_snapshots (snapshot_id, created_at, symbol, payload) VALUES (%s, %s, %s, %s)",
+        (snapshot.snapshot_id, snapshot.created_at.isoformat(), snapshot.symbol, payload),
+    )
     return snapshot.snapshot_id
 
 
 def load_snapshot(snapshot_id: str) -> EvidenceSnapshot:
-    init_db()
-    with sqlite3.connect(_db_path()) as conn:
-        row = conn.execute(
-            "SELECT payload FROM evidence_snapshots WHERE snapshot_id = ?", (snapshot_id,)
-        ).fetchone()
+    db.init_all_tables()
+    row = db.fetchone(
+        "SELECT payload FROM evidence_snapshots WHERE snapshot_id = %s", (snapshot_id,)
+    )
     if row is None:
         raise ValueError(f"Unknown evidence snapshot: {snapshot_id}")
-    return EvidenceSnapshot.model_validate_json(row[0])
+    return EvidenceSnapshot.model_validate_json(row["payload"])
+

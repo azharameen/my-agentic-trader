@@ -51,12 +51,10 @@ choices require a new ADR or an explicit superseding decision.
 
 ## ADR-006: Local-First Storage
 
-- Status: accepted
-- Context: The project should remain free or low-cost and easy to operate.
-- Decision: SQLite and local cached artifacts remain the default until measured
-  requirements justify another store.
-- Consequence: Scaling limitations are accepted at single-operator scale and
-  must be demonstrated before adding infrastructure.
+- Status: superseded by ADR-023
+- Context: The project initially used local SQLite storage.
+- Decision: Replaced by unified PostgreSQL 16 sidecar persistence under ADR-023.
+- Consequence: Eliminates file locking and concurrency bottlenecks.
 
 ## ADR-007: Agent Tools Are Read/Trigger-Only
 
@@ -107,14 +105,23 @@ choices require a new ADR or an explicit superseding decision.
 
 ## ADR-011: Thresholds Require Explicit Safety Decisions
 
-- Status: proposed
+- Status: accepted
 - Context: T-002, T-004, and T-005 contain safety-relevant thresholds for
   freshness, source disagreement, regime vetoes, event blackouts, exposure, and
-  citation completeness, but currently provide no numeric values.
-- Decision: Thresholds must be documented and reviewed before implementation;
-  agents may not invent them during coding or runtime.
-- Consequence: T-002 and T-004 remain implementation-blocked until the
-  threshold table is accepted.
+  citation completeness, but previously lacked accepted numeric values.
+- Decision:
+  1. Market Regime Gates (sourced automatically via Yahoo Finance `^NSEI` and `^INDIAVIX`):
+     - India VIX > 24.0: Market anxiety/crisis; completely block new swing trade entries (`allow_new_entries = False`, `risk_multiplier = 0.0`).
+     - India VIX in [19.0, 24.0]: Elevated volatility; permit new entries but halve risk budget (`allow_new_entries = True`, `risk_multiplier = 0.5`).
+     - NIFTY 50 close < 50-day EMA: Intermediate downtrend; block all long pullback entries (`allow_new_entries = False`).
+  2. Multi-Agent Qualitative Thresholds:
+     - Bear Risk Critic structural damage confidence >= 0.70 triggers immediate early veto, halting further LLM analysis.
+     - Research Synthesis Arbiter composite confidence score >= 0.60 required to pass to deterministic risk engine.
+  3. Evaluation Sample Size:
+     - Minimum 30 closed trades required before statistical validity is claimed for Sharpe, Profit Factor, or win-rate metrics.
+  4. Stale Proposal Horizon:
+     - 240 minutes proposal age and > 2.0% price drift invalidate paused proposals upon resume.
+- Consequence: T-004 and T-007 are unblocked with calibrated, operator-accepted thresholds. All thresholds remain configurable in `config/settings.py` with these agreed baseline defaults.
 
 ## ADR-012: Modernization Preserves Paper-Only Execution
 
@@ -123,8 +130,8 @@ choices require a new ADR or an explicit superseding decision.
   agents, and Groww/Zerodha GTT execution. The current product scope explicitly
   forbids live buy/sell automation.
 - Decision: Implement safe orchestration, data, research, and paper-execution
-  improvements without enabling live orders. SQLite remains the only supported
-  persistence system. Any broker GTT or live order path requires T-008,
+  improvements without enabling live orders. Persistence is unified under
+  PostgreSQL 16 (ADR-023). Any broker GTT or live order path requires T-008,
   independent reconciliation review, and a new accepted ADR.
 - Consequence: No research agent receives order-capable tools, and no external
   database deployment is part of the product scope.
@@ -226,11 +233,9 @@ choices require a new ADR or an explicit superseding decision.
   deploy, Studio, LangSmith-hosted tracing) that require external services
   and are explicitly out of scope until a separate ADR authorizes them.
 - Decision:
-  1. Adopt LangGraph's native `SqliteStore` (`langgraph.store.sqlite`, already
-     bundled with the installed `langgraph-checkpoint-sqlite` package — no new
-     dependency) as the long-term-memory backend for the operator profile and
-     any future cross-thread notes, replacing the ad hoc SQLite table. The
-     store is compiled into the graph via `compile(store=...)`.
+  1. Adopt LangGraph's native store abstraction (modernized to `PostgresStore` under ADR-023)
+     as the long-term-memory backend for the operator profile and cross-thread notes.
+     The store is compiled into the graph via `compile(store=...)`.
   2. Set `durability="sync"` explicitly on `graph.invoke()` for `run_symbol`
      and `resume_symbol` so every super-step (screener, catalyst, risk,
      interrupt, execute) is durably checkpointed before the next step starts.
@@ -333,3 +338,82 @@ choices require a new ADR or an explicit superseding decision.
 - Consequence: Tracing remains fully optional and local-first by default.
   When enabled, the operator is knowingly sending trace data to LangSmith;
   no secret value is ever written to application logs.
+
+## ADR-022: Multi-Agent Qualitative Research Architecture (Sequential Bear-First with Early Exit)
+
+- Status: accepted
+- Context: The single-analyst LLM prompt in `analyst.py` is vulnerable to
+  confirmation bias and lacks adversarial stress-testing. Evaluating screened
+  candidates with a multi-agent debate improves research quality, but parallel
+  fan-out triples LLM API consumption on every screened ticker.
+- Decision:
+  1. Implement a hierarchical multi-agent research subgraph with sequential early
+     exit:
+     - **Bear Risk Critic Agent**: Runs first. Evaluates governance red flags,
+       promoter pledge spikes, litigation, accounting flags, and overhead chart
+       resistance. If it classifies the setup as `STRUCTURAL_DAMAGE` with
+       `confidence >= 0.70`, it triggers an immediate early veto, halting further
+       LLM analysis and saving ~60% downstream API cost.
+     - **Bull Momentum Analyst Agent**: Invoked only if the Bear Critic does not
+       veto. Evaluates volume breakout quality, sector rotation tailwinds, and
+       continuation drivers.
+     - **Synthesis Arbiter Agent**: Weighs both arguments, sets explicit
+       invalidation criteria, and calculates a composite confidence score (0–100).
+       Only candidates scoring `>= 0.60` pass to the deterministic risk engine.
+  2. Hard Invariant: All agents emit strictly qualitative classifications via
+     Pydantic schemas; agents never emit or mutate prices, stop losses, position
+     quantities, or order instructions.
+- Consequence: Eliminates confirmation bias while keeping LLM costs controlled.
+  Every research verdict persists full reasoning and citation lists to the audit
+  snapshot.
+
+## ADR-023: PostgreSQL as Unified Relational, Checkpoint, and Store Persistence Layer
+
+- Status: accepted
+- Context: TrAId is evolving from a single-process script into a multi-component
+  containerized architecture (scheduler, Telegram interface, pipeline worker).
+  SQLite persistence creates file-locking and concurrency bottlenecks across
+  multiple processes and lacks native connection pooling and transactional
+  migrations.
+- Decision:
+  1. Adopt PostgreSQL 16 (`postgres:16-alpine`) as the unified persistence engine
+     running as a Docker sidecar service in `docker-compose.yml`.
+  2. This decision supersedes ADR-006 (Local-First SQLite), the SQLite-only
+     constraint in ADR-012, and the SQLite checkpointer constraint in ADR-019.
+  3. LangGraph checkpoints and durable interrupts are persisted using
+     `langgraph-checkpoint-postgres` (`PostgresSaver`) backed by a synchronous
+     `psycopg_pool.ConnectionPool`.
+  4. LangGraph long-term memory (operator profile and cross-thread state) is
+     persisted using `langgraph.store.postgres.PostgresStore`.
+  5. Relational data (`trade_audit_log`, `notification_outbox`, `research_cache`,
+     `evidence_snapshots`, `graph_threads`) are unified into the PostgreSQL
+     database with B-tree indexes on `status`, `timestamp`, and `symbol`.
+  6. All legacy SQLite database files, dependencies, and code branches are completely
+     removed in favor of pure PostgreSQL persistence.
+  7. Paper-only execution invariant (ADR-002) remains strictly preserved: live
+     order execution remains blocked.
+- Consequence: Docker Compose requires a PostgreSQL service. State transitions and
+  checkpoints survive container restarts with high multi-client concurrency.
+
+## ADR-024: Multi-Strategy Simultaneous Screening with Deterministic Priority
+
+- Status: accepted
+- Context: The original screener supported only a single strategy
+  (`pullback_in_uptrend`). Operators require diverse setups (e.g. Momentum
+  Breakout, Mean Reversion) without running separate disjoint scans.
+- Decision:
+  1. The screener evaluates universe candidates simultaneously against all
+     active setup strategies:
+     - `PullbackInUptrendStrategy`: Price > EMA 200, RSI 14 < 42, Volume > 0.5 * 20-day avg.
+     - `BreakoutMomentumStrategy`: Price > 20-day High, Price > EMA 50, Volume > 1.5 * 20-day avg.
+     - `BollingerMeanReversionStrategy`: Price <= Lower Band (20, 2.0), RSI 14 < 30, Price > EMA 200.
+  2. Deterministic Priority Resolution: When a single symbol qualifies under
+     multiple strategies on the same day, the system selects the primary strategy
+     based on priority (`BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`) and logs
+     secondary matches as supporting tags, ensuring exactly one proposal card
+     per ticker per calendar day.
+  3. Deterministic Risk Engine uses strategy-specific risk parameters (e.g.
+     Breakout uses 1.0 ATR soft / 2.0 ATR hard / 3.0 R:R; Pullback uses 1.5 ATR
+     soft / 2.5 ATR hard / 2.0 R:R).
+- Consequence: Expands candidate generation while preventing duplicate simultaneous
+  proposals or operator choice paralysis.

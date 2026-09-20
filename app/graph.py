@@ -7,7 +7,7 @@ Builds a `StateGraph(TradingState)` with the following node chain:
 
 Key LangGraph concepts used here:
 
-* **Checkpoints** — a `SqliteSaver` (from `data/checkpoints.db`) persists the
+* **Checkpoints** — `PostgresSaver` persists the
   full `TradingState` after every super-step. If the process dies mid-run, the
   thread can be resumed from the last checkpoint without re-running completed
   nodes.
@@ -26,11 +26,9 @@ The graph is compiled once and cached. Each symbol is run in its own thread
 from __future__ import annotations
 
 import logging
-import sqlite3
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
@@ -40,6 +38,7 @@ from app import (
     cache,
     checkpoint,
     corporate_events,
+    db,
     evidence,
     executor,
     observability,
@@ -268,97 +267,38 @@ def _route_after_approval(state: TradingState) -> str:
 # --------------------------------------------------------------------------- #
 # Graph construction
 # --------------------------------------------------------------------------- #
-_THREAD_INDEX_SCHEMA = """
-CREATE TABLE IF NOT EXISTS graph_threads (
-    thread_id   TEXT PRIMARY KEY,
-    symbol      TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-"""
-
-
-def _get_checkpointer() -> SqliteSaver:
-    """Return a process-wide `SqliteSaver` backed by a persistent connection.
-
-    `SqliteSaver.from_conn_string()` returns a *context manager*, not a saver,
-    so we build the saver from a long-lived `sqlite3` connection instead. The
-    connection (and its `data/` directory) is created once and reused, which
-    keeps checkpoints durable across `build_graph()` calls.
-    """
-    saver = checkpoint.get_checkpointer()
-    connection = checkpoint.current_connection()
-    if connection is not None:
-        connection.executescript(_THREAD_INDEX_SCHEMA)
-    return saver
+def _get_checkpointer() -> Any:
+    """Return the process-wide checkpointer backed by PostgreSQL."""
+    return checkpoint.get_checkpointer()
 
 
 def _record_thread(thread_id: str, symbol: str) -> None:
-    """Track active trade threads in our own table instead of checkpoint internals."""
-    _get_checkpointer()
-    connection = checkpoint.current_connection()
-    if connection is None:
-        return
+    """Track active trade threads in PostgreSQL graph_threads table."""
+    now = datetime.now(timezone.utc).isoformat()
     try:
-        connection.execute(
+        db.execute(
             """
             INSERT INTO graph_threads (thread_id, symbol, updated_at)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
             ON CONFLICT(thread_id) DO UPDATE SET
-                symbol = excluded.symbol,
-                updated_at = excluded.updated_at
+                symbol = EXCLUDED.symbol,
+                updated_at = EXCLUDED.updated_at
             """,
-            (thread_id, symbol, datetime.now(timezone.utc).isoformat()),
+            (thread_id, symbol, now),
         )
-        connection.commit()
     except Exception as exc:  # noqa: BLE001 - checkpoint index is best effort
         logger.warning("Could not record graph thread %s: %s", thread_id, exc)
 
 
-def _backfill_thread_index() -> None:
-    """Best-effort migration from checkpoint internals to the public thread index."""
-    _get_checkpointer()
-    connection = checkpoint.current_connection()
-    if connection is None:
-        return
-    try:
-        indexed = connection.execute("SELECT COUNT(*) FROM graph_threads").fetchone()
-        if indexed and indexed[0]:
-            return
-        cur = connection.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ?",
-            ("trade-%",),
-        )
-        rows = [row[0] for row in cur.fetchall()]
-        if not rows:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        connection.executemany(
-            "INSERT OR IGNORE INTO graph_threads (thread_id, symbol, updated_at) VALUES (?, ?, ?)",
-            [(thread_id, thread_id.split("-", 2)[1] if "-" in thread_id else thread_id, now) for thread_id in rows],
-        )
-        connection.commit()
-    except Exception:  # noqa: BLE001 - checkpoint migration is best effort
-        return
-
-
 def _all_thread_ids(prefix: str = "trade-") -> list[str]:
-    """Distinct thread ids recorded in the checkpoint DB, matching a prefix.
-
-    Queries the checkpointer's own SQLite connection directly (rather than
-    LangGraph's generic `list()` API) so we can filter server-side and avoid
-    depending on undocumented listing semantics.
-    """
-    _backfill_thread_index()
-    connection = checkpoint.current_connection()
-    if connection is None:
-        return []
+    """Distinct thread ids recorded in graph_threads matching a prefix."""
     try:
-        cur = connection.execute(
-            "SELECT thread_id FROM graph_threads WHERE thread_id LIKE ? ORDER BY updated_at",
+        rows = db.fetchall(
+            "SELECT thread_id FROM graph_threads WHERE thread_id LIKE %s ORDER BY updated_at",
             (f"{prefix}%",),
         )
-        return [row[0] for row in cur.fetchall()]
-    except sqlite3.OperationalError as exc:
+        return [row["thread_id"] for row in rows]
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Could not list checkpoint thread ids: %s", exc)
         return []
 
@@ -415,26 +355,11 @@ def symbol_history(symbol: str, limit: Optional[int] = None) -> list[dict]:
     return history
 
 
-def build_graph(checkpointer: Optional[SqliteSaver] = None) -> Any:
-    """Compile the trading StateGraph with a SQLite checkpointer and store.
-
-    Parameters
-    ----------
-    checkpointer:
-        Optional pre-built `SqliteSaver`. If omitted, the process-wide saver
-        backed by `CHECKPOINT_DB_PATH` is used.
-
-    The compiled graph also carries the shared long-term `SqliteStore`
-    (`app.store`) so future nodes/tools can read or write namespaced,
-    cross-thread memory (e.g. the operator profile) via LangGraph's native
-    store API without introducing a second persistence mechanism.
-
-    Returns
-    -------
-    Compiled graph ready for `.invoke()` / `.stream()` with a `thread_id`.
-    """
+def build_graph(checkpointer: Optional[Any] = None) -> Any:
+    """Compile the trading StateGraph with a checkpointer and store."""
     if checkpointer is None:
         checkpointer = _get_checkpointer()
+
 
     graph = StateGraph(TradingState)
 

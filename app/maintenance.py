@@ -1,50 +1,38 @@
-"""Local SQLite integrity and backup operations."""
+"""PostgreSQL database integrity and maintenance operations."""
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
+import logging
+from typing import Any
 
-from config.settings import get_settings
+from app import db
 
-
-def _database_paths() -> dict[str, Path]:
-    settings = get_settings()
-    return {
-        "audit": Path(settings.DATABASE_PATH),
-        "checkpoints": Path(settings.CHECKPOINT_DB_PATH),
-    }
+logger = logging.getLogger(__name__)
 
 
 def check_databases() -> dict[str, str]:
-    """Run SQLite integrity checks and raise if any database is unhealthy."""
+    """Run PostgreSQL integrity and table checks, verifying connectivity."""
     results: dict[str, str] = {}
-    for name, path in _database_paths().items():
-        if not path.exists():
-            results[name] = "missing"
-            continue
-        with sqlite3.connect(path) as conn:
-            result = conn.execute("PRAGMA integrity_check").fetchone()[0]
-        if result != "ok":
-            raise RuntimeError(f"SQLite integrity check failed for {name}: {result}")
-        results[name] = "ok"
+    try:
+        row = db.fetchone("SELECT 1 AS alive")
+        if not row or row.get("alive") != 1:
+            results["postgres"] = "unhealthy"
+            raise RuntimeError("PostgreSQL liveness query returned invalid result")
+
+        # Verify key tables exist
+        tables = ["trade_audit_log", "notification_outbox", "research_cache", "evidence_snapshots", "graph_threads"]
+        for table in tables:
+            db.fetchone(f"SELECT COUNT(*) FROM {table}")
+
+        results["postgres"] = "ok"
+    except Exception as exc:
+        logger.error("PostgreSQL health check failed: %s", exc)
+        results["postgres"] = f"error: {exc}"
+        raise RuntimeError(f"PostgreSQL integrity check failed: {exc}") from exc
+
     return results
 
 
-def backup_databases() -> dict[str, Path]:
-    """Create consistent timestamped backups of both local SQLite databases."""
-    settings = get_settings()
-    backup_dir = Path(settings.DATABASE_BACKUP_DIR)
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    paths: dict[str, Path] = {}
-
-    for name, source_path in _database_paths().items():
-        if not source_path.exists():
-            continue
-        destination = backup_dir / f"{name}-{timestamp}.db"
-        with sqlite3.connect(source_path) as source, sqlite3.connect(destination) as target:
-            source.backup(target)
-        paths[name] = destination
-    return paths
+def backup_databases() -> dict[str, Any]:
+    """Report PostgreSQL operational status."""
+    return {"status": "managed_by_postgres_sidecar", "integrity": check_databases()}

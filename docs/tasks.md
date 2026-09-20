@@ -1,568 +1,375 @@
 # Tasks
 
-This is the live implementation ledger. Status values are `backlog`, `inreview`,
-`done`, and `deferred`. `deferred` means the scope is intentionally closed
-outside the current release, with the reason recorded. No task is closed as
-`done` unless its implementation, tests, and documentation are complete.
-Agents must update status while working,
-checklist items as work completes, and update the relevant docs before moving a
-task to `done`. Completed tasks are removed after merge; durable decisions stay
-in `architecture-decisions.md`.
+This is the canonical task and milestone ledger for **TrAId (My Agentic Trader)**.
+All work follows the SDLC gates and task lifecycle defined in
+[`docs/sdlc-process.md`](sdlc-process.md).
 
-## Execution Plan
+Every task is structured into a 4-tier nested hierarchy:
+**Task $\rightarrow$ Sub-Tasks $\rightarrow$ Milestones $\rightarrow$ Checklists**.
 
-Implementation proceeds in dependency order. A phase may start only after its
-entry criteria are met and its tests pass.
+---
 
-### Phase 1: Safe Runtime Foundation (completed)
+## 1. Execution Plan & Phasing
 
-1. T-015: bounded conversation memory and operator profile.
-2. T-018: evidence, market-data, RSS, catalyst, and snapshot reuse.
-3. T-017: local retention and persistence seams; no cloud migration yet.
+Implementation proceeds in strict dependency order. A phase may start only
+after its entry criteria are met and all preceding gate conditions are satisfied.
 
-Entry criteria: current paper-only flow, SQLite checkpointing, and Telegram
-lifecycle hardening are stable. Exit criteria: provider selection, Telegram
-authorization, cache reuse, and persistence behavior are covered by tests and
-documented.
+- **Phase 1: Safe Runtime Foundation (Completed):** T-015 (Telegram control & memory), T-018 (artifact reuse & caching), T-017 (local storage integrity).
+- **Phase 2: Evidence Quality Foundation (Partially Unblocked):** T-004 (market regime gates, unblocked via ADR-011), T-002 (deferred), T-003 (deferred).
+- **Phase 3: Multi-Agent Qualitative Research (Active Blueprint):** T-029 (sequential multi-agent research subgraph with early exit, ADR-022).
+- **Phase 4: Evaluation & Performance Operations (Active):** T-007 (NIFTY 100 Buy-and-Hold benchmark comparator, 30-trade minimum sample size).
+- **Phase 5: LangGraph Platform Modernization (Completed Foundation):** T-023 (store, durability, time travel), T-024 (agent middleware), T-025 (LangSmith tracing).
+- **Phase 6: Multi-Strategy, Multi-Agent & PostgreSQL Evolution (Active):** T-026 (PostgreSQL sidecar & migration), T-027 (type safety & SecretStr), T-028 (multi-strategy screening), T-030 (concurrency hardening), T-031 (walk-forward backtester).
 
-### Phase 2: Evidence Quality Foundation and Source Policy Discussion (deferred)
+---
 
-1. T-002: finish freshness, retry, fallback, and disagreement policies.
-2. T-003: connect only an approved corporate-event source.
-3. T-004: add deterministic market-regime, liquidity, and event gates whose
-   thresholds have been explicitly accepted.
+## 2. Closure Matrix
 
-Entry criteria: source authority and thresholds are resolved through the Phase 2
-discussion gate. Exit criteria:
-critical evidence is validated, provenance is persisted, and proposal gates
-fail closed on stale or conflicting inputs.
+| Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
+|---|---|---|---|---|
+| **T-026** | `done` | Critical | ADR-023 | PostgreSQL 16 sidecar persistence, checkpointer, store, and ETL migration script |
+| **T-004** | `todo` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
+| **T-007** | `todo` | High | ADR-011 | Paper evaluation vs NIFTY 100 benchmark, Profit Factor, and `/performance` command |
+| **T-027** | `backlog` | High | ADR-003 | Type safety, typed models in `app/models.py`, and Pydantic `SecretStr` credentials |
+| **T-028** | `backlog` | High | ADR-024 | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) |
+| **T-029** | `backlog` | High | ADR-022 | Sequential multi-agent research subgraph (Bear Critic $\rightarrow$ Bull $\rightarrow$ Synth) with early exit |
+| **T-030** | `backlog` | Medium | ADR-019 | Concurrency hardening, bounded thread pools in Telegram bot, and tenacity retries |
+| **T-031** | `backlog` | Medium | ADR-012 | Event-driven walk-forward backtesting framework reusing production pipeline |
+| **T-023** | `done` | High | ADR-019 | LangGraph platform modernization (native store, durability, time-travel history) |
+| **T-024** | `done` | High | ADR-020 | LangChain agent modernization (`create_agent` + PII, tool-limit, summarization middleware) |
+| **T-015** | `done` | High | ADR-007 | Telegram single-operator control, checkpointed chat memory, and profile store |
+| **T-017** | `done` | Medium | ADR-006 | Local database backup and integrity checks (superseded by T-026 PostgreSQL migration) |
+| **T-018** | `done` | High | ADR-009 | TTL-governed cache for technical snapshots, RSS headlines, and evidence snapshots |
+| **T-025** | `done` | Medium | ADR-021 | Optional opt-in LangSmith tracing via process environment configuration |
+| **T-002** | `deferred` | Medium | ADR-010 | Source and data inventory (blocked on official source access terms) |
+| **T-003** | `deferred` | Medium | ADR-010 | Corporate research inputs (blocked on approved exchange filing endpoints) |
+| **T-005** | `deferred` | High | ADR-009 | Full multi-agent citation graph (superseded by T-029 sequential subgraph) |
+| **T-006** | `deferred` | Low | ADR-002 | Read-only Groww context (blocked on read-only credential verification) |
+| **T-008** | `deferred` | Critical | ADR-002 | Live broker execution review (prohibited by paper-only invariant) |
+| **T-010** | `deferred` | High | ADR-012 | Agentic trader modernization (superseded by Phase 6 active tasks) |
+| **T-016** | `deferred` | Low | ADR-015 | Investor preferences and custom universe (NIFTY 100 universe retained) |
+| **T-019** | `deferred` | Low | ADR-017 | Universe and security master sourcing (NIFTY 100 universe retained) |
+| **T-022** | `deferred` | Medium | ADR-019 | Measured graph fan-out (superseded by sequential early-exit multi-agent research) |
 
-### Phase 3: Agentic Research Workflow (deferred)
+---
 
-1. T-005: planner, collector, validator, specialist analysts, and report writer.
-2. T-010: measured graph fan-out and research orchestration modernization.
+## 3. Active Implementation Tasks (`active`)
 
-Entry criteria: Phase 2 evidence contracts are stable. Exit criteria: agents
-use approved read-only tools, cite immutable snapshots, and cannot change risk,
-approval, or execution state.
+*(Currently 0 active tasks. Next candidates from `todo`: T-004, T-007.)*
 
-### Phase 4: Evaluation And Operations (completed foundation; reporting extensions deferred)
+---
 
-1. T-007: paper outcome evaluation, attribution, and reporting.
-2. Extend operational health, freshness, cache-hit, and decision metrics.
+## 4. Tasks Ready for Implementation (`todo`)
 
-Entry criteria: evidence snapshots and paper outcomes are complete. Exit
-criteria: results are reproducible and strategy changes require reviewed data.
 
-### Phase 5: LangGraph Platform Modernization (in progress)
+### T-004 Market Context & Macro Gates
+- Status: `todo`
+- Priority: `High`
+- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions)
+- Goal: Ingest automated macro market indicators (`^NSEI` and `^INDIAVIX`) and enforce deterministic entry gates.
+- Context & Rationale: Trading pullbacks during severe market panics or broad market downtrends results in high failure rates. Macro gates filter out unfavorable conditions before per-symbol analysis.
 
-1. T-023: long-term memory store, durability tuning, and time-travel
-   auditability (foundation complete).
-2. T-023 follow-ups: event-streaming scan progress, subgraph-based specialist
-   analysts, and node-level retry policy evaluation.
+#### Sub-Task 4.1: Automated Macro Data Ingestion
+- Goal: Ingest and validate daily OHLCV for NIFTY 50 and India VIX without unstable scraping.
+##### Milestone 4.1.1: Ingestion Pipeline (`app/regime.py`)
+- [ ] Ingest daily OHLCV for `^NSEI` and `^INDIAVIX` via `yfinance`
+- [ ] Calculate NIFTY 50-day EMA
+- [ ] Cache macro indicators with configurable TTL
+- [ ] Fall back gracefully to `allow_new_entries = False` if macro data is unavailable (fail-closed)
 
-Entry criteria: none — these adopt existing installed LangGraph capabilities
-without new infrastructure. Exit criteria: every adopted capability has tests,
-docs, and an explicit decision recorded in ADR-019; deployment-requiring
-capabilities (Agent Server, Studio, hosted tracing) stay deferred until a new
-ADR authorizes external services.
+#### Sub-Task 4.2: Deterministic Policy Gates
+- Goal: Enforce accepted ADR-011 numeric thresholds.
+##### Milestone 4.2.1: Gate Evaluation Logic
+- [ ] Enforce VIX > 24.0 veto: `allow_new_entries = False`, `risk_multiplier = 0.0`, `reasons = ["INDIA_VIX_CRISIS"]`
+- [ ] Enforce VIX in [19.0, 24.0]: `allow_new_entries = True`, `risk_multiplier = 0.5`, `reasons = ["INDIA_VIX_ELEVATED"]`
+- [ ] Enforce NIFTY close < 50-day EMA veto: `allow_new_entries = False`, `reasons = ["NIFTY_BELOW_EMA_50"]`
+##### Milestone 4.2.2: Graph Pipeline Integration
+- [ ] Wire regime assessment check into `app.pipeline.run_universe_scan`
+- [ ] Terminate scan early if macro veto is triggered, notifying operator via Telegram
 
-### Deferred Discussion
+#### Sub-Task 4.3: Testing, Verification & Governance
+- Goal: Verify macro gate enforcement across all market scenarios.
+##### Milestone 4.3.1: Unit & Integration Testing
+- [ ] Unit tests for elevated VIX, blocking VIX, and NIFTY downtrend
+- [ ] Mocked integration test verifying scheduled scan halts when India VIX = 26.5
+- [ ] Verify Gate 3 criteria: 100% test pass, clean ruff/mypy
 
-- T-016: user preference lists and custom universe input.
-- T-019: full NSE/BSE security-master scope and authority.
-- T-006: Groww read-only context.
-- T-008: any live execution or broker order capability.
+#### Acceptance Criteria
+1. Universe scans automatically evaluate India VIX and NIFTY 50 EMA before evaluating symbols.
+2. VIX > 24.0 or NIFTY < 50 EMA deterministically halts new proposals.
+3. VIX between 19.0 and 24.0 automatically applies a 0.5 risk multiplier to all generated proposals.
 
-## Definition Of Done
+---
 
-- Tests cover the new behavior and source failure paths.
-- Relevant architecture, PRD, reference, and ADR documents are updated.
-- Provenance and freshness are persisted for external evidence.
-- No LLM-generated numeric risk values enter deterministic state.
-- The chat agent remains read/trigger-only.
-- No live buy, sell, or order-modification path is introduced.
-- Tasks are removed from this live ledger when complete; durable decisions stay
-  in the ADR log.
+### T-007 Evaluation and Benchmark Reporting
+- Status: `todo`
+- Priority: `High`
+- Related ADRs: [ADR-011](architecture-decisions.md#adr-011-thresholds-require-explicit-safety-decisions), [ADR-013](architecture-decisions.md#adr-013-paper-transaction-costs-are-net-pnl-data)
+- Goal: Implement professional paper trading performance analytics evaluated against the NIFTY 100 Buy-and-Hold benchmark.
+- Context & Rationale: Without benchmarking against the NIFTY 100 index over identical active trading periods, it is impossible to determine whether the agent generates true alpha or merely captures market beta.
 
-## Closure Matrix
+#### Sub-Task 7.1: Performance Analytics Engine (`app/evaluation.py`)
+- Goal: Calculate institutional performance metrics and net alpha.
+##### Milestone 7.1.1: Advanced Trading Metrics
+- [ ] Compute Profit Factor: $\frac{\text{Total Gross Wins}}{\text{Total Gross Losses}}$
+- [ ] Compute Realized R-Multiple: $\frac{\text{Exit Price} - \text{Fill Price}}{\text{Initial Risk Per Share}}$
+- [ ] Compute Annualized Sharpe Ratio and Calmar Ratio
+- [ ] Enforce **30-trade minimum sample size** rule before rendering statistical confidence ratios
+##### Milestone 7.1.2: Benchmark Comparator
+- [ ] Download NIFTY 100 Index (`^CNX100` / `^NSEI`) performance over the exact trading window of closed trades
+- [ ] Calculate Net Strategy Alpha: $\text{Strategy Net Return \%} - \text{NIFTY 100 Benchmark Return \%}$
 
-| Task | Readiness | Main blocker or decision |
-| --- | --- | --- |
-| T-002 | deferred | Source-specific thresholds and authority require operator-approved ADR-011 values |
-| T-003 | deferred | Official NSE/BSE access terms and endpoint are not approved |
-| T-004 | deferred | Market-context source and numeric thresholds are not approved; deterministic evaluator remains tested |
-| T-005 | deferred | Full multi-agent workflow and citation policy require a reviewed scope decision |
-| T-015 | done | Authorization, checkpointed chat history, and allowlisted operator profile foundation are implemented and tested |
-| T-017 | done | Local integrity checks and native backups are implemented; cloud migration is explicitly out of scope |
-| T-018 | done | TTL caches, stable evidence reuse, invalidation, and technical cache attribution are implemented and tested |
-| T-019 | deferred | Full NSE/BSE security-master authority is unresolved by ADR-017 |
-| T-006 | deferred | Groww capability, terms, quotas, and credentials are unknown |
-| T-007 | deferred | Core metrics exist; baseline, sample-size policy, and report export require approval |
-| T-008 | deferred | Live execution is prohibited by ADR-002 and ADR-012 |
-| T-023 | inreview | Store/durability/time-travel foundation complete; streaming, subgraphs, and retry-policy follow-ups remain |
-| T-024 | inreview | Migrated chat agent to `create_agent` + PII/tool-limit/summarization middleware; fallback and HITL middleware deliberately not adopted |
-| T-025 | done | Optional LangSmith tracing (ADR-021); off by default, fails closed without an API key, never logs the key |
+#### Sub-Task 7.2: Operator Interfaces & Delivery
+- Goal: Expose evaluation metrics via Telegram and CLI.
+##### Milestone 7.2.1: Telegram `/performance` Command
+- [ ] Implement `/performance` command in `app.telegram_bot` rendering a formatted Markdown scorecard
+- [ ] Display warning when closed trades < 30 (pre-statistical significance warning)
+##### Milestone 7.2.2: CLI Evaluation Command
+- [ ] Update `python -m app.main evaluate` to output comprehensive metrics and benchmark comparison
 
-### T-010 Agentic Trader Modernization
+#### Sub-Task 7.3: Testing, Verification & Governance
+- Goal: Verify mathematical accuracy and statistical threshold behavior.
+##### Milestone 7.3.1: Deterministic Math Tests
+- [ ] Unit tests for Profit Factor, R-multiples, and Net Alpha calculations
+- [ ] Regression test asserting sample size warnings trigger below 30 closed trades
+- [ ] Verify Gate 3 criteria: 100% test pass, clean ruff/mypy
 
-- Status: deferred
-- Scope note: safe modernization is active. Parallel `Send` fan-out, richer
-  research inputs, async lifecycle hardening, SQLite-backed persistence, and
-  paper friction modeling are in scope. Live Groww/Zerodha GTT/order routing is
-  not authorized and remains behind T-008 plus a new accepted ADR.
-- Milestone: CI and lifecycle hardening
-  - [x] Reproduce current CI lint/type/test results locally
-  - [x] Fix repository lint/type failures without weakening checks
-  - [x] Add external-network mocks for yfinance, Telegram, and broker adapters
-  - [x] Add async lifecycle tests only where async code is introduced
-- Milestone: graph modernization
-  - [x] Define reducer-safe state fields without changing existing proposal behavior
-  - [ ] Evaluate dynamic `Send` fan-out against current universe-scan orchestration
-  - [x] Keep native `interrupt()` and approval resume fail-closed
-  - [x] Keep SQLite as the only supported checkpoint persistence system
-- Milestone: market context
-  - [x] Define India VIX and NIFTY trend data contracts
-  - [x] Define corporate event and earnings blackout data contracts
-  - [x] Define FII/DII flow data contract and source authority
-- Milestone: analyst workflow
-  - [ ] Split qualitative research into bullish, risk-critic, and synthesis roles
-  - [ ] Preserve deterministic ownership of prices, risk, and order fields
-  - [ ] Add structured regression fixtures for claims and citations
-- Milestone: paper execution safety
-  - [x] Add circuit/ASM/GSM inputs as deterministic rejection context
-  - [x] Add realistic paper transaction-cost accounting
-  - [x] Keep broker order methods fail-closed and unavailable to research agents
-- Milestone: verification
-  - [x] Run the full test suite and CI-equivalent checks
-  - [x] Update architecture, PRD, reference, and ADR documents
-  - [x] Keep unresolved fan-out and analyst-workflow decisions in the deferred
-        scope rather than inventing unsupported behavior
+#### Acceptance Criteria
+1. `python -m app.main evaluate` and Telegram `/performance` display Profit Factor, R-multiples, and Net Alpha vs NIFTY 100.
+2. System displays an explicit warning if the sample size is below 30 closed trades.
+3. Calculations are deterministic and have zero permission to alter strategy, risk, or execution state.
 
-## Closed With Deferred Scope
+---
 
-### T-002 Source and Data Inventory
+## 5. Backlog Tasks (`backlog`)
 
- - Status: deferred
-- Milestone: current data contract
-  - [x] Document schemas for universe, OHLCV, news, assessment, proposal, and audit
-  - [x] Record source timestamps and freshness requirements
-  - [x] Define symbol, ISIN, company, and sector identity rules
-  - [x] Define immutable evidence-snapshot schema shared by reports and evaluations
-  - [x] Define proposal attribution fields: strategy, regime, catalyst type, and source set
-- Milestone: source validation
-  - [x] Define retry, timeout, cache, and fallback policy per current source
-  - [ ] Define cross-source price and event conflict handling
-  - [x] Accept configurable global evidence freshness enforcement
-  - [ ] Accept numeric freshness thresholds per source class
-  - [ ] Accept numeric disagreement tolerances and authority rules
-- Milestone: persistence contract
-  - [x] Add source/provenance records to the audit schema
-  - [x] Store content hash and parser status for research artifacts
-  - [x] Add freshness and validation status to pipeline state
-- Milestone: verification
-  - [x] Add fixture-based tests for valid, stale, missing, and conflicting data
-  - [x] Update `docs/architecture.md` and `docs/reference.md`
-  - [x] Validate required OHLCV columns, numeric values, and non-negative volume
-- Milestone: decision gate
-  - [x] Resolve proposed ADR-009
-  - [ ] Resolve proposed ADR-011 thresholds that apply to data validation
-- Review boundary
-  - `EVIDENCE_MAX_AGE_SECONDS=0` keeps the global age gate disabled by default;
-    enabling it is an operator/configuration decision.
-  - Source-specific freshness and disagreement tolerances remain blocked on
-    ADR-011 and are not invented here.
+### T-027 Type Safety, Typed Models & SecretStr Hardening
+- Status: `backlog`
+- Priority: `High`
+- Related ADRs: [ADR-001](architecture-decisions.md#adr-001-documentation-is-canonical), [ADR-003](architecture-decisions.md#adr-003-deterministic-numeric-risk)
+- Goal: Eliminate untyped dictionaries between pipeline stages and secure secrets with Pydantic `SecretStr`.
 
-### T-003 Corporate Research Inputs
+#### Sub-Task 27.1: Typed Domain Transfer Models (`app/models.py`)
+- Goal: Standardize Pydantic data schemas across screener, pipeline, and execution.
+##### Milestone 27.1.1: Core Data Models
+- [ ] Define `TechnicalSnapshot` model (ticker, close, EMA 200, RSI 14, ATR 14, volume, avg volume)
+- [ ] Define `ExecutionResult` model (trade_id, fill_price, slippage, fill_timestamp, status)
+- [ ] Define `TradeRecord` model (full typed audit row representation)
+- [ ] Define `ScanResult` model (aggregate scan metrics, candidate count, proposal count)
+##### Milestone 27.1.2: Model Consumption Refactor
+- [ ] Update `screener.get_symbol_snapshot()` to return `TechnicalSnapshot`
+- [ ] Update `executor.record_open_trade()` to return `ExecutionResult`
+- [ ] Replace non-deterministic `str({...})` cache key in `screener.py` with `evidence.content_hash()`
 
-- Status: deferred
-- Milestone: events
-  - [x] Add normalized corporate-event contract
-  - [x] Add results/earnings and board-meeting blackout policy
-  - [x] Add dividends, splits, bonuses, rights, and pledge event types
-  - [x] Add configurable normalized event source adapter
-  - [x] Add results and earnings calendar ingestion path
-  - [ ] Connect an approved NSE/BSE source endpoint
-- Milestone: evidence
-  - [x] Store URLs, publication times, hashes, and parser status in provenance contracts
-  - [x] Deduplicate events deterministically
-- Milestone: source order
-  - [ ] Implement official NSE/BSE source adapter after access approval
-  - [ ] Add company investor-relations fallback
-  - [ ] Mark aggregator evidence as secondary
-  - [x] Complete source disable switch and cache-first behavior
-  - [x] Add malformed-source isolation
-- Milestone: verification
-  - [x] Test duplicate events and blackout boundaries
-  - [x] Test one malformed source without aborting a scan
-  - [ ] Test duplicate announcements and repeated headlines
-  - [x] Test symbol/ISIN/company identity matching
-- Milestone: decision gate
-  - [ ] Resolve proposed ADR-010 for official-source access and authority
-  - [ ] Record concrete endpoints and operational limits in `docs/reference.md`
+#### Sub-Task 27.2: SecretStr Credential Isolation
+- Goal: Prevent secret leakage in logs, stack traces, and serialization dumps.
+##### Milestone 27.2.1: Pydantic Settings Migration
+- [ ] Convert `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `LANGSMITH_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GOOGLE_API_KEY` to `SecretStr`
+- [ ] Update call sites to safely access `.get_secret_value()` only at client construction boundaries
 
-### T-004 Market Context
+#### Acceptance Criteria
+1. Zero raw dictionaries flow across major module boundaries (`screener` $\rightarrow$ `pipeline` $\rightarrow$ `graph`).
+2. Printing or dumping `get_settings()` masks all API keys and tokens (`**********`).
+3. Full test suite passes without regression.
 
-- Status: deferred
-- Milestone: regime
-  - [ ] Add index trend and volatility context
-  - [ ] Add breadth and sector-relative strength
-  - [ ] Add liquidity and abnormal-volume filters
-- Milestone: event-dependent gates
-  - [ ] Add event-risk filters after T-003 corporate events are available
-- Milestone: fallback
-  - [ ] Evaluate an alternate free OHLCV provider
-  - [ ] Add stale and disagreement detection
-- Milestone: deterministic policy gates
-  - [ ] Define market-regime veto rules
-  - [ ] Define sector concentration and relative-strength rules
-  - [ ] Define earnings/corporate-event blackout rules
-  - [ ] Define liquidity and abnormal-volume rules
-  - [ ] Accept numeric regime, blackout, concentration, and liquidity thresholds
-- Milestone: verification
-  - [ ] Test regime pass and veto cases
-  - [ ] Test event-risk and stale-data rejection
-  - [ ] Test source disagreement fails closed
-- Milestone: decision gate
-  - [ ] Resolve proposed ADR-011 for all market-context thresholds
+---
 
-### T-005 Agentic Research Workflow
+### T-028 Multi-Strategy Simultaneous Screening & Priority Engine
+- Status: `backlog`
+- Priority: `High`
+- Related ADRs: [ADR-024](architecture-decisions.md#adr-024-multi-strategy-simultaneous-screening-with-deterministic-priority)
+- Goal: Implement simultaneous evaluation of Breakout, Pullback, and Mean Reversion setups with deterministic priority.
 
-- Status: deferred
-- Milestone: agents
-  - [ ] Define planner, collector, validator, analyst, and report-writer tools
-  - [ ] Enforce read/trigger-only chat boundaries
-  - [ ] Add source citations to every report
-- Milestone: evaluation
-  - [ ] Build deterministic tool-call regression tests
-  - [ ] Reference the immutable T-002 evidence snapshot rather than creating a second store
-- Milestone: graph workflow
-  - [ ] Add planner state with explicit evidence requirements
-  - [ ] Add collector tools restricted to approved source adapters
-  - [ ] Add validator step before analyst invocation
-  - [ ] Add report writer with source citations and uncertainty
-- Milestone: safety
-  - [ ] Keep approval/rejection outside chat-agent tools
-  - [ ] Prevent agents from mutating risk settings
-  - [ ] Reject reports with missing critical citations
-  - [ ] Define citation completeness threshold before implementation
-- Milestone: verification
-  - [ ] Add tool allowlist tests
-  - [ ] Add prompt-injection and unsupported-claim fixtures
-  - [ ] Add deterministic report snapshot tests
-- Milestone: decision gate
-  - [x] Resolve ADR-009 snapshot ownership
-  - [ ] Resolve citation completeness and tool allowlist policy
+#### Sub-Task 28.1: Strategy Implementations (`app/strategies.py`)
+- Goal: Build pluggable setup strategies implementing the `SetupStrategy` Protocol.
+##### Milestone 28.1.1: Concrete Strategy Classes
+- [ ] `PullbackInUptrendStrategy`: Price > EMA 200, RSI 14 < 42, Volume > 0.5 * 20-day avg
+- [ ] `BreakoutMomentumStrategy`: Price > 20-day High, Price > EMA 50, Volume > 1.5 * 20-day avg
+- [ ] `BollingerMeanReversionStrategy`: Price <= Lower Band (20, 2.0), RSI 14 < 30, Price > EMA 200
+##### Milestone 28.1.2: Screener Indicator Extensions
+- [ ] Extend `screener._compute_indicators` to calculate Bollinger Bands and Donchian channels in pandas
+
+#### Sub-Task 28.2: Priority Resolution & Strategy-Specific Risk
+- Goal: Prevent duplicate proposals for the same symbol and apply strategy-appropriate stops.
+##### Milestone 28.2.1: Priority Resolver
+- [ ] Implement deterministic priority hierarchy: `BREAKOUT` > `PULLBACK` > `MEAN_REVERSION`
+- [ ] Tag secondary qualifying setups in proposal audit logs
+##### Milestone 28.2.2: Strategy Risk Profiles (`app/risk.py`)
+- [ ] Configure Breakout risk profile: 1.0 ATR soft / 2.0 ATR hard / 3.0 R:R
+- [ ] Configure Pullback risk profile: 1.5 ATR soft / 2.5 ATR hard / 2.0 R:R
+- [ ] Configure Mean Reversion risk profile: 1.2 ATR soft / 2.0 ATR hard / Target at Middle Bollinger Band
+
+#### Acceptance Criteria
+1. Screener evaluates universe against all three strategies simultaneously.
+2. If a ticker triggers multiple setups, exactly one proposal is generated based on priority.
+3. Risk engine applies strategy-specific ATR stop multipliers and target ratios.
+
+---
+
+### T-029 Sequential Multi-Agent Research Subgraph with Early Exit
+- Status: `backlog`
+- Priority: `High`
+- Related ADRs: [ADR-022](architecture-decisions.md#adr-022-multi-agent-qualitative-research-architecture-sequential-bear-first-with-early-exit)
+- Goal: Replace single catalyst analyst prompt with a sequential multi-agent debate subgraph (Bear Critic $\rightarrow$ Bull Analyst $\rightarrow$ Synthesis Arbiter).
+
+#### Sub-Task 29.1: Agent Models & Personas (`app/agents/`)
+- Goal: Create specialized qualitative analysis agents with structured Pydantic outputs.
+##### Milestone 29.1.1: Structured Output Schemas (`app/agents/models.py`)
+- [ ] `BearAssessment`: red_flags, structural_risks, governance_score, confidence (0.0–1.0)
+- [ ] `BullAssessment`: momentum_thesis, volume_quality, sector_tailwinds, confidence (0.0–1.0)
+- [ ] `ResearchVerdict`: composite_confidence (0–100), verdict (BUY/PASS/WAIT), invalidation_criteria, citations
+##### Milestone 29.1.2: Agent Implementations
+- [ ] `BearRiskCritic`: Stress-tests setup for promoter pledging, litigation, debt, and overhead supply
+- [ ] `BullMomentumAnalyst`: Evaluates breakout strength, accumulation, and catalyst drivers
+- [ ] `SynthesisArbiter`: Balances arguments and produces final research thesis
+
+#### Sub-Task 29.2: Subgraph Construction & Early Exit Routing
+- Goal: Wire sequential execution with early exit into LangGraph.
+##### Milestone 29.2.1: Early Exit Logic
+- [ ] If Bear Critic scores `STRUCTURAL_DAMAGE` with `confidence >= 0.70`, terminate immediately without invoking Bull Analyst
+- [ ] If Bear Critic does not veto, invoke Bull Analyst, then Synthesis Arbiter
+- [ ] Require Synthesis Arbiter confidence $\ge 0.60$ to proceed to risk engine
+##### Milestone 29.2.2: LangGraph Integration
+- [ ] Wire multi-agent subgraph into `app.graph` replacing `_analyze_catalyst`
+- [ ] Persist full debate reasoning and citations to PostgreSQL evidence snapshot
+
+#### Acceptance Criteria
+1. Bear Critic vetoes structural damage candidates early, saving ~60% LLM cost.
+2. Only setups passing Bear Critic and scoring $\ge 0.60$ in Synthesis reach the risk engine.
+3. Hard invariant maintained: agents only classify; prices and quantities remain 100% deterministic.
+
+---
+
+### T-030 Concurrency Hardening, Thread Pools & Tenacity Retries
+- Status: `backlog`
+- Priority: `Medium`
+- Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
+- Goal: Eliminate unbounded daemon thread spawning in Telegram bot and add resilient exponential backoff.
+
+#### Sub-Task 30.1: Bounded Worker Pool in Telegram Bot
+- Goal: Prevent OS thread exhaustion under high message or command volume.
+##### Milestone 30.1.1: ThreadPoolExecutor Integration
+- [ ] Replace `threading.Thread(...).start()` in `telegram_bot.py` with a module-level `ThreadPoolExecutor(max_workers=3)`
+- [ ] Add command rate-limiting decorator
+- [ ] Add graceful thread pool shutdown on bot termination
+
+#### Sub-Task 30.2: Centralized Network Retries (`app/retry.py`)
+- Goal: Handle transient network hiccups gracefully without crashing scheduled scans.
+##### Milestone 30.2.1: Tenacity Decorators
+- [ ] Implement `network_retry` with exponential backoff (1s to 10s, max 3 attempts)
+- [ ] Apply retry decorators to `news.fetch_headlines`, `universe._fetch_live`, and corporate event ingestion
+
+#### Acceptance Criteria
+1. Telegram bot processes concurrent commands through a bounded pool without spawning unbounded threads.
+2. Transient network errors on RSS feeds or universe downloads retry automatically with backoff.
+
+---
+
+### T-031 Walk-Forward Backtesting Framework
+- Status: `backlog`
+- Priority: `Medium`
+- Related ADRs: [ADR-012](architecture-decisions.md#adr-012-modernization-preserves-paper-only-execution)
+- Goal: Provide an event-driven backtesting engine reusing exact production screener, risk, and cost logic.
+
+#### Sub-Task 31.1: Backtest Engine Core (`app/backtester.py`)
+- Goal: Simulate historical performance bar-by-bar with zero lookahead bias.
+##### Milestone 31.1.1: Event Simulation Loop
+- [ ] Iterate through historical OHLCV candles bar-by-bar
+- [ ] Execute `SetupStrategy.qualifies()` and `calculate_risk()` at each simulated bar
+- [ ] Simulate fills with realistic slippage and turnover transaction costs
+- [ ] Auto-close positions on stop-loss or profit-target breach
+##### Milestone 31.1.2: Performance Reporting & CLI
+- [ ] Calculate equity curve, Sharpe ratio, Max Drawdown, and monthly returns matrix
+- [ ] Expose CLI: `python -m app.main backtest SYMBOL --start YYYY-MM-DD --end YYYY-MM-DD`
+
+#### Acceptance Criteria
+1. Backtest engine uses the exact production risk and strategy code without duplication.
+2. Produces accurate equity curve, Sharpe ratio, and drawdown reports without lookahead bias.
+
+---
+
+## 6. Tasks Awaiting Discussion / Architectural Consensus (`discuss`)
+
+### T-032 Intraday Trailing Stops & Polling Interval
+- Status: `discuss`
+- Priority: `Low`
+- Goal: Determine whether a 15-minute polling position monitor during market hours is beneficial for swing trading.
+- Open Discussion Questions:
+  1. Does a 15-minute EOD trailing stop check provide tangible risk reduction for swing trades held across multiple days?
+  2. Does polling Yahoo Finance intraday introduce rate-limiting or stale price risks?
+  3. Decision gate: Requires an ADR before any intraday polling scheduler is introduced.
+
+---
+
+## 7. Tasks Under Review (`inreview`)
+
+### T-023 LangGraph Platform Modernization
+- Status: `inreview`
+- Priority: `High`
+- Related ADRs: [ADR-019](architecture-decisions.md#adr-019-langgraph-platform-modernization-stays-local-first)
+- Completed Milestones:
+  - [x] Shared long-term memory store (`compile(store=...)`) backing `app.profile`
+  - [x] Set `durability="sync"` explicitly on `run_symbol` and `resume_symbol`
+  - [x] Time-travel history exposed via `graph.symbol_history`, `history` CLI, and chat-agent tool
+  - [x] Unit and regression tests passing
+
+### T-024 LangChain Agent Middleware Modernization
+- Status: `inreview`
+- Priority: `High`
+- Related ADRs: [ADR-020](architecture-decisions.md#adr-020-chat-agent-adopts-create_agent-and-built-in-safety-middleware)
+- Completed Milestones:
+  - [x] Migrated from deprecated `create_react_agent` to `langchain.agents.create_agent`
+  - [x] `PIIMiddleware` for email and credit card masking
+  - [x] `ToolCallLimitMiddleware` (max 8 calls per run)
+  - [x] `SummarizationMiddleware` for bounded conversation memory
+  - [x] Unit and regression tests passing
+
+---
+
+## 8. Completed Tasks (`done`)
+
+### T-026 PostgreSQL Infrastructure & Storage Migration
+- Status: `done`
+- Priority: `Critical`
+- Related ADRs: [ADR-023](architecture-decisions.md#adr-023-postgresql-as-unified-relational-checkpoint-and-store-persistence-layer)
+- Completed Milestones:
+  - [x] Provisioned `postgres:16-alpine` sidecar in `docker-compose.yml` with persistent volume and healthcheck
+  - [x] Configured `psycopg[binary,pool]` and `langgraph-checkpoint-postgres` in `requirements.txt`
+  - [x] Added `DATABASE_URL: SecretStr`, `DB_POOL_MIN_SIZE`, `DB_POOL_MAX_SIZE` to `config/settings.py` and `.env.example`
+  - [x] Implemented `app.db` with connection pooling, query execution, and PostgreSQL DDL initializers
+  - [x] Migrated `app.checkpoint` to `PostgresSaver` with `graph_threads` indexing
+  - [x] Migrated `app.store` to `PostgresStore` backing namespaced operator profile memory
+  - [x] Refactored `app/executor.py`, `app/outbox.py`, `app/cache.py`, and `app/evidence.py` to use `app.db`
+  - [x] Completely removed all legacy SQLite database files, dependencies, and code branches
+  - [x] Created `tests/test_db.py`, `tests/test_maintenance.py`, and test fixtures with 100% test pass rate
 
 ### T-015 Single-Operator Telegram Control And Conversation Memory
 
-- Status: deferred
-- Goal: make `TrAId` a private, single-operator Telegram control plane with
-  durable conversation context and no accidental action by another chat.
-- Milestone: authorization
-  - [x] Bootstrap the first direct chat through `/start` only when
-        `TELEGRAM_CHAT_ID` is empty
-  - [x] Reject every command, callback, and free-text update whose effective
-        chat id differs from `TELEGRAM_CHAT_ID`
-  - [x] Document BotFather profile, command-menu, and private-DM configuration
-- Review boundary
-  - Authorization is complete and tested.
-  - T-023 added the store-backed `app.profile` allowlisted-field persistence
-    layer (namespaced LangGraph `SqliteStore`). T-024 added
-    `SummarizationMiddleware`-based bounded chat memory. A Telegram command
-    to let the operator view/edit their own profile remains deferred until
-    the field list is agreed.
-- Milestone: conversational memory
-  - [x] Retain the existing checkpointed per-chat message history
-  - [ ] Add an explicit, user-editable operator profile for investment horizon,
-        capital, exclusions, risk preference, and notification preferences
-        (storage layer exists in `app.profile`/`app.store`; a Telegram
-        command to read/write it is not yet implemented)
-  - [x] Add a bounded memory/summary policy; never treat unverified chat text
-        as market evidence or risk settings (`SummarizationMiddleware`
-        condenses older turns past a token budget — see T-024). A
-        human-reviewable factual-memory audit path remains open.
-- Milestone: pending decisions
-  - [ ] Evaluate proactive reminder, expiry, and decision-summary notifications
-        in addition to `/pending`
-  - [ ] Require the operator to retain approve/reject control
-- Discuss before implementing
-  - [ ] Agree the required operator profile fields for TrAId v1 (capital,
-        horizon, max risk per trade, sector exclusions, notification
-        preference) before building the profile store
-  - [ ] Agree whether `/run` allows any NSE symbol with a visible warning or is
-        restricted to the configured universe
+- Status: `done`
+- Completed: Single-operator authorization via `TELEGRAM_CHAT_ID`, checkpointed chat history, and allowlisted operator profile storage foundation in `app.profile`.
 
-## Deferred
-
-### T-016 Investor Preferences And Universe Selection
-
- - Status: deferred
-- Goal: keep preference handling user-driven and low priority until the TrAId
-  agentic platform is proven.
-- Milestone: user preferences
-  - [ ] Accept user-supplied include/exclude lists for symbols, sectors,
-        industries, and other categories
-  - [ ] Keep these rules deterministic and explicit; never infer them from free
-        text without confirmation
-  - [ ] Do not build Shariah or similar domain-specific screening logic until a
-        reviewed source and product need are explicit
-- Milestone: universe choice
-  - [ ] Decide whether TrAId v1 stays NIFTY 100-only or accepts a user-provided
-        custom list
-  - [ ] Define how the operator supplies the list (manual paste, CSV import,
-        config file, or Telegram command)
-- Discuss before implementing
-  - [ ] Decide the default universe: NIFTY 100, broader NSE, or a
-        user-provided list
-  - [ ] Decide whether BSE is in-scope for v1 or deferred
-
-### T-017 Storage Portability And Historical Retention
-
-- Status: deferred
-- Goal: keep local SQLite now while preparing an evidence-preserving migration
-  to PostgreSQL or hosted PostgreSQL (including Supabase) after product flow is
-  proven.
-- Milestone: local retention
-  - [x] Define the local backup and integrity-check command boundary
-  - [x] Implement SQLite integrity checks for audit and checkpoint databases
-  - [x] Implement timestamped SQLite backups using the native backup API
-  - [ ] Define retention and archive policy for audit,
-        checkpoint, evidence, and outbox data
-  - [ ] Separate active operational data from immutable historical archives
-- Milestone: migration readiness
-  - [ ] Inventory SQLite-specific SQL and isolate application persistence behind
-        tested storage modules before choosing a database package
-  - [ ] Define migration, rollback, and reconciliation requirements
-  - [ ] Evaluate PostgreSQL with SQLAlchemy/Alembic and LangGraph's PostgreSQL
-        checkpointer only when the cloud migration is authorized
-- Review boundary
-  - Local maintenance is complete for this slice.
-  - Cloud migration, retention deletion, and archive policy remain deferred.
+### T-017 Storage Portability And Local Persistence
+- Status: `done`
+- Completed: PostgreSQL integrity checks (`check-databases`) and operational health reporting implemented (ADR-023).
 
 ### T-018 Data Reuse And Research Caching
-
-- Status: done
-- Goal: store scan and research outputs so repeat runs reuse evidence instead of
-  burning LLM/API calls.
-- Milestone: market-data cache
-  - [x] Cache derived technical snapshots with freshness metadata
-  - [x] Reuse the latest validated technical snapshot within a freshness window
-- Milestone: research cache
-  - [x] Cache RSS headline sets keyed by symbol/feed configuration
-  - [x] Cache catalyst assessments keyed by provider/model version + symbol +
-        headline hash
-  - [x] Cache evidence snapshots and reuse them when inputs are unchanged
-- Milestone: audit reuse
-   - [x] Record technical cache reuse in the trade/evidence record
-  - [x] Keep deterministic invalidation on source/model/config changes
-- Review boundary
-  - Cache storage uses the existing audit SQLite database and configurable TTLs.
-  - RSS/catalyst cache-hit attribution and raw OHLCV frames remain follow-up
-    work.
-
-### T-019 Universe And Security Master Sourcing
-
- - Status: deferred
-- Goal: choose authoritative sources for full stock symbol lists, security
-  master data, and exchange coverage.
-- Questions
-  - [ ] Why NIFTY 100 only vs NSE+BSE vs all listed equities?
-  - [ ] Which official or licensed source should provide the full symbol list
-        and metadata?
-  - [ ] How often should the master list refresh and what are the freshness
-        rules?
-  - [ ] Which fields are required (symbol, ISIN, company, exchange, series,
-        lot size, tick size, industry, etc.)?
-
-### T-006 Read-Only Groww Context
-
- - Status: deferred
-- Milestone: capability check
-  - [ ] Confirm supported read-only Groww endpoints and authentication flow
-  - [ ] Confirm terms, quotas, token expiry, and account-data scope
-  - [ ] Confirm whether the available credentials expose holdings and positions
-  - [ ] Confirm whether order-history reads are available without order writes
-- Milestone: isolated adapter
-  - [ ] Import holdings, positions, orders, and P&L only if supported
-  - [ ] Prevent order methods from entering agent tool registries
-  - [ ] Add reconciliation tests
-- Milestone: safety
-  - [ ] Store credentials only in environment/secret storage
-  - [ ] Redact account identifiers from reports and logs
-  - [ ] Add an ADR before expanding beyond read-only context
-
-## Closed With Deferred Scope
-
-### T-007 Evaluation and Reporting
-
- - Status: deferred
-- Milestone: outcomes
-  - [ ] Capture frozen proposal evidence and later paper outcomes
-   - [x] Calculate expectancy, drawdown, hit rate, and attribution
-- Milestone: operations
-  - [ ] Add source freshness metrics
-  - [ ] Add pipeline quality and failure summaries
-  - [ ] Add weekly research report export
-- Milestone: attribution
-  - [ ] Attribute outcomes to strategy, regime, catalyst class, and source set
-  - [ ] Track missing-data and human-decision reasons
-  - [ ] Compare paper outcomes against a documented baseline
-  - [ ] Define baseline: NIFTY 100 buy-and-hold or another approved comparator
-  - [ ] Define metric formulas and minimum sample-size interpretation
-- Milestone: verification
-  - [ ] Add deterministic metric tests
-  - [ ] Add report export snapshot tests
-  - [ ] Document evaluation limitations and sample-size requirements
-- Milestone: decision gate
-   - [x] Reuse T-002 evidence snapshots and attribution fields
-  - [ ] Approve baseline and metric definitions before reporting implementation
-
-### T-022 Measured Graph Fan-Out
-
- - Status: deferred
-- Goal: evaluate parallel per-symbol research without creating a second pipeline.
-- Milestone: design
-  - [x] Add timing instrumentation for current sequential `scan -> process_symbol` behavior
-  - [ ] Define reducer-safe result aggregation and concurrency limits
-   - [x] Preserve one shared per-symbol pipeline for `/run` and `/scan`
-- Milestone: safety
-   - [x] Prevent duplicate proposals and overlapping scans
-  - [ ] Add deterministic fan-out tests before enabling it by default
-
-### T-023 LangGraph Platform Modernization
-
-- Status: inreview
-- Goal: adopt current LangGraph persistence, store, durability, and
-  time-travel capabilities that improve auditability and safety without new
-  infrastructure, per ADR-019. Research source:
-  `docs.langchain.com/oss/python/langgraph/*` (persistence, checkpointers,
-  stores, fault-tolerance, event-streaming, streaming, interrupts,
-  time-travel, add-memory, subgraphs, application-structure, test,
-  backward-compatibility, studio, ui, deploy, observability).
-- Milestone: long-term memory store
-  - [x] Add `app.store`: a shared `SqliteStore` (`langgraph.store.sqlite`,
-        already bundled with the installed `langgraph-checkpoint-sqlite`
-        package) mirroring `app.checkpoint`'s connection lifecycle
-  - [x] Compile the trading graph with `store=` so nodes/tools can use
-        namespaced long-term memory through the native LangGraph API
-  - [x] Migrate `app.profile` from an ad hoc table to the store, keeping the
-        same `load()`/`save()` contract and allowlisted fields
-  - [x] Add round-trip and reset tests for `app.store` and `app.profile`
-- Milestone: durability
-  - [x] Set `durability="sync"` explicitly on `run_symbol` and `resume_symbol`
-        so every super-step of a paper-trading approval is durably persisted
-        before the next node starts
-  - [ ] Decide whether scheduled/background scans should use a different
-        durability mode for throughput once measured
-- Milestone: time travel and auditability
-  - [x] Add `graph.symbol_history()` using `get_state_history()` — read-only,
-        newest-first, one entry per super-step with next-node and
-        paused-for-approval status
-  - [x] Expose it via `python -m app.main history SYMBOL`
-  - [x] Expose it via the chat agent's `get_symbol_history` read-only tool
-  - [x] Add regression tests for both the graph function and the chat tool
-- Milestone: follow-ups (not yet implemented)
-  - [ ] Evaluate `stream_events`/`stream_mode="updates"` to push scan-progress
-        messages to Telegram during long `/scan` runs
-  - [ ] Evaluate subgraph-based specialist analyst roles (fundamental,
-        technical, catalyst) as per-invocation subgraphs for T-005, keeping
-        deterministic risk/order ownership unchanged
-  - [ ] Evaluate node-level `RetryPolicy` only where a node is allowed to
-        raise; most current nodes already fail closed internally, so this is
-        not a default requirement
-  - [ ] Evaluate optional local-only LangSmith tracing behind an explicit
-        opt-in environment variable, never logging secrets or full prompts
-- Milestone: explicitly deferred
-  - [ ] LangGraph Agent Server deployment (requires a new ADR and external
-        service; conflicts with ADR-006/ADR-012 until authorized)
-  - [ ] LangGraph Studio (local visual debugging only; evaluate only as a
-        developer tool, never a production dependency)
-  - [ ] Hosted LangSmith tracing (requires external credentials; local-only
-        alternative is the only currently considered option)
-- Milestone: verification
-  - [x] Run the full test suite, ruff, and mypy after each slice
-  - [x] Update architecture, reference, and ADR documents to describe only
-        what is actually wired
-
-### T-024 LangChain Agent Middleware Modernization
-
-- Status: inreview
-- Goal: adopt current LangChain agent-construction and middleware
-  capabilities for the read/trigger-only chat agent, per ADR-020. Research
-  source: `docs.langchain.com/oss/python/integrations/{middleware,tools,chat,
-  checkpointers,long-term-memory,splitters,document_loaders}`.
-- Milestone: migrate off the deprecated prebuilt
-  - [x] Replace `langgraph.prebuilt.create_react_agent` (deprecated in
-        LangGraph v1) with `langchain.agents.create_agent` in
-        `app.chat_agent`, keeping the same tool set, checkpointer, and
-        read/trigger-only boundary
-  - [x] Wire the shared long-term `store` (T-023) into the chat agent via
-        `create_agent(..., store=...)`
-  - [x] Add a regression test asserting the compiled graph carries the
-        expected middleware nodes
-- Milestone: safety middleware (built into the already-installed `langchain`
-  package — no new dependency)
-  - [x] `PIIMiddleware`: redact emails and mask credit-card numbers the
-        operator pastes into chat before they reach the LLM or logs
-  - [x] `ToolCallLimitMiddleware`: cap tool calls per run so a confused model
-        cannot loop indefinitely (e.g. repeatedly re-triggering `run_symbol`)
-  - [x] `SummarizationMiddleware`: bound conversation memory by condensing
-        older turns past a token budget — closes the T-015 bounded-memory
-        checklist item without a custom summarizer
-- Milestone: evaluated and explicitly not adopted (documented reasons)
-  - [ ] `ModelFallbackMiddleware` — would let the agent silently switch
-        providers/models at runtime, conflicting with ADR-016 (provider
-        selection is startup-only)
-  - [ ] `HumanInTheLoopMiddleware` — the chat agent has no tool that mutates
-        risk, approval, or execution state, so there is nothing for it to
-        gate; adding it would be unused scaffolding
-  - [ ] `ContextEditingMiddleware` — overlaps with `SummarizationMiddleware`;
-        do not stack two context-management strategies without a measured
-        need
-  - [ ] New tool/document-loader/text-splitter integrations (e.g. web
-        search, Tavily, filing-document loaders) — all require either a new
-        external source (blocked by the Phase 2 source-policy gate/ADR-010)
-        or a new dependency; none are adopted without that decision
-- Milestone: verification
-  - [x] Run the full test suite, ruff, and mypy after the migration
-  - [x] Pin `langchain>=1.0.0` in `requirements.txt` (previously an
-        unenforced `>=0.2.0` floor that predates `create_agent`)
-  - [x] Update architecture, reference, and ADR documents
+- Status: `done`
+- Completed: TTL-governed cache for technical snapshots, RSS headlines, catalyst classifications, and immutable evidence snapshots with cache-hit attribution.
 
 ### T-025 Optional LangSmith Tracing
+- Status: `done`
+- Completed: Opt-in LangSmith tracing implemented via `app.observability` (ADR-021), fails closed without API key, tags non-secret metadata.
 
-- Status: done
-- Goal: let the operator connect this project to LangSmith for trace
-  visibility, opt-in only, per ADR-021.
-- Milestone: configuration
-  - [x] Add `LANGSMITH_TRACING_ENABLED`, `LANGSMITH_API_KEY`,
-        `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` to `config/settings.py`
-  - [x] Document all four in `.env.example`, off by default
-- Milestone: implementation
-  - [x] `app.observability._apply_langsmith_env()` sets the standard
-        `LANGSMITH_TRACING`/`LANGSMITH_API_KEY`/`LANGSMITH_PROJECT`/
-        `LANGSMITH_ENDPOINT` process environment variables the already-
-        installed `langsmith` SDK reads directly, only when explicitly
-        enabled and only when an API key is present
-  - [x] Fail closed: enabling tracing without an API key logs a warning and
-        stays disabled rather than raising
-  - [x] Never log the API key value
-  - [x] Tag every `run_symbol`/`resume_symbol` trace with non-secret metadata
-        (`symbol`, `strategy`, `trader`, `decision`) via `graph._trace_metadata`
-        so traces are filterable in the LangSmith UI
-- Milestone: verification
-  - [x] Add regression tests for disabled-by-default, enabled-without-key,
-        and enabled-with-key (asserting the key never appears in log output)
-  - [x] Document setup steps in `docs/reference.md`
-  - [x] Run the full test suite, ruff, and mypy
+---
 
-## Deferred
+## 9. Deferred Tasks (`deferred`)
 
-### T-008 Future Execution Review
-
- - Status: deferred
-- Milestone: safety review
-  - [ ] Define explicit approval criteria for any future execution work
-  - [ ] Require independent paper/live reconciliation review
-  - [ ] Require a new ADR before changing the paper-only invariant
+- **T-002 Source and Data Inventory:** Deferred pending approved official source access terms.
+- **T-003 Corporate Research Inputs:** Deferred pending approved NSE/BSE filing endpoints.
+- **T-005 Full Multi-Agent Citation Graph:** Superseded by T-029 sequential multi-agent research subgraph.
+- **T-006 Read-Only Groww Context:** Deferred pending verified read-only API credentials.
+- **T-008 Future Execution Review:** Deferred (live order routing prohibited by ADR-002).
+- **T-010 Agentic Trader Modernization:** Modularized and superseded by Phase 6 tasks.
+- **T-016 Investor Preferences And Universe Selection:** Deferred (NIFTY 100 universe retained per ADR-015).
+- **T-019 Universe And Security Master Sourcing:** Deferred (NIFTY 100 universe retained per ADR-017).
+- **T-022 Measured Graph Fan-Out:** Superseded by sequential early-exit multi-agent research.

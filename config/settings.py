@@ -19,7 +19,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -121,23 +121,23 @@ class Settings(BaseSettings):
     )
 
     # ------------------------------------------------------------------ #
-    # Persistence
+    # Persistence (PostgreSQL Unified Store, ADR-023)
     # ------------------------------------------------------------------ #
-    DATABASE_PATH: str = Field(
-        default="data/trading_audit.db",
-        description="SQLite audit database path (relative to working dir).",
+    DATABASE_URL: SecretStr = Field(
+        default=SecretStr("postgresql://trader_admin:trader_secret@localhost:5432/trader_db"),
+        description="PostgreSQL connection string for checkpointer, store, and audit storage.",
     )
-    CHECKPOINT_DB_PATH: str = Field(
-        default="data/checkpoints.db",
-        description="SQLite path for LangGraph SqliteSaver checkpoints.",
+    DB_POOL_MIN_SIZE: int = Field(
+        default=2,
+        description="Minimum connection pool size for PostgreSQL.",
     )
-    STORE_DB_PATH: str = Field(
-        default="data/store.db",
-        description="SQLite path for the LangGraph long-term memory store (operator profile, cross-thread notes).",
+    DB_POOL_MAX_SIZE: int = Field(
+        default=10,
+        description="Maximum connection pool size for PostgreSQL.",
     )
     DATABASE_BACKUP_DIR: str = Field(
         default="data/backups",
-        description="Directory for timestamped SQLite backups.",
+        description="Directory for timestamped database backups.",
     )
 
     # ------------------------------------------------------------------ #

@@ -10,7 +10,7 @@ This module defines the *data contracts* that flow between LangGraph nodes:
 
 Keeping the contracts here (rather than inside each node) means every node
 agrees on field names and types, and the state is trivially serializable to
-SQLite checkpoints.
+PostgreSQL checkpoints.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ class TradingState(TypedDict, total=False):
 
     `total=False` means every key is optional; nodes read/write only the keys
     they own. LangGraph merges node outputs into this dict and persists the
-    whole thing to the SqliteSaver checkpoint after each super-step.
+    whole thing to the PostgreSQL PostgresSaver checkpoint after each super-step.
 
     Lifecycle of keys:
       * `symbol`            — set by the entry (screener) node.
