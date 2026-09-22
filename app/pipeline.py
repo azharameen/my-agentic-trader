@@ -93,6 +93,12 @@ def process_symbol(
     if interrupts:
         payload = interrupts[0].value
         logger.info("Graph paused at human_approval for %s; pushing to Telegram.", symbol)
+        try:
+            from app import proposals
+            strat = state.get("strategy_name", "PULLBACK") if isinstance(state, dict) else "PULLBACK"
+            proposals.record_proposal(payload, strategy_name=strat)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to record pending proposal for %s", symbol)
         recipient = get_settings().TELEGRAM_CHAT_ID
         outbox.enqueue("TRADE_PROPOSAL", recipient, payload)
         outbox.deliver_pending(telegram_bot.send_proposal_to_chat)
@@ -156,13 +162,21 @@ def run_universe_scan(
                 )
 
             logger.info("Scanning universe (%d symbols)...", len(universe_symbols))
+            try:
+                from app import events as app_events
+                app_events.broadcast_event(
+                    "SCAN_STARTED",
+                    {"total_symbols": len(universe_symbols), "regime": regime_assessment.risk_multiplier},
+                )
+            except Exception:  # noqa: BLE001
+                pass
             events = corporate_events.fetch_events()
             qualifiers = screener.scan_nifty_universe(universe_symbols)
             logger.info("%d symbols qualified for analysis.", len(qualifiers))
 
             proposed: list[str] = []
             rejected: dict[str, int] = {}
-            for row in qualifiers:
+            for idx, row in enumerate(qualifiers, start=1):
                 try:
                     headlines = news.fetch_headlines(row["symbol"])
                     state = process_symbol(
@@ -180,7 +194,33 @@ def run_universe_scan(
                 elif isinstance(state, dict):
                     reason = state.get("rejection_reason") or state.get("execution_details", {}).get("reason", "ERROR")
                     rejected[reason] = rejected.get(reason, 0) + 1
+                try:
+                    from app import events as app_events
+                    app_events.broadcast_event(
+                        "SCAN_PROGRESS",
+                        {
+                            "current": idx,
+                            "total": len(qualifiers),
+                            "symbol": row["symbol"],
+                            "proposed_count": len(proposed),
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             scan_duration = time.perf_counter() - scan_started
+            try:
+                from app import events as app_events
+                app_events.broadcast_event(
+                    "SCAN_COMPLETED",
+                    {
+                        "qualifiers_count": len(qualifiers),
+                        "proposed_count": len(proposed),
+                        "duration_seconds": round(scan_duration, 2),
+                        "proposed": proposed,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
             logger.info(
                 "Scan timing: symbols=%d qualifiers=%d proposed=%d rejected=%s duration_seconds=%.3f",

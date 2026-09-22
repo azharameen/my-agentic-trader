@@ -264,6 +264,34 @@ class Settings(BaseSettings):
         default="data/corporate_events.json",
         description="Local cache for normalized corporate events.",
     )
+
+    # ------------------------------------------------------------------ #
+    # Groww Broker API Integration (Read-Only, ADR-035)
+    # ------------------------------------------------------------------ #
+    GROWW_ENABLED: bool = Field(
+        default=False,
+        description="Enable read-only Groww API integration for balance and portfolio sync.",
+    )
+    GROWW_API_KEY: SecretStr | None = Field(
+        default=None,
+        description="Groww API Key from Trading API dashboard.",
+    )
+    GROWW_API_SECRET: SecretStr | None = Field(
+        default=None,
+        description="Groww API Secret / TOTP Secret key for automated daily authentication.",
+    )
+    GROWW_ACCESS_TOKEN: SecretStr | None = Field(
+        default=None,
+        description="Optional pre-generated Groww daily access token override.",
+    )
+    GROWW_MARKET_DATA_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Prefer Groww for live quotes/LTP/OHLC and historical candles when "
+            "configured and authenticated; always falls back to yfinance "
+            "automatically when Groww is unavailable, unauthenticated, or rate-limited (ADR-036)."
+        ),
+    )
     SCAN_CRON_HOUR: int = Field(
         default=15,
         description="Hour (24h) of the daily automatic universe scan.",

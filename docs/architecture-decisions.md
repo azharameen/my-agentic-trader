@@ -457,3 +457,170 @@ choices require a new ADR or an explicit superseding decision.
 - Consequence: Eliminates daily scan skipping, provides complete research transparency,
   and delivers full position tracking directly inside Telegram.
 
+## ADR-027: Complete Interactive Web Application as Primary Control Cockpit
+
+- Status: accepted (supersedes ADR-025 read-only scope)
+- Context: While Telegram provides convenient mobile alerts, operators require a
+  complete, interactive desktop trading cockpit supporting rich visual analytics,
+  one-click trade approvals/rejections with modal Agent Debate drawers, manual
+  trade exits, real-time AI Copilot chat with token and tool trace streaming,
+  interactive candlestick charts, and on-demand walk-forward backtesting.
+- Decision:
+  1. **Primary Control Cockpit**: The Web Application is elevated to the primary
+     interactive cockpit for all trading operations, human-in-the-loop approvals,
+     position management, AI research copilot chats, and analytics. Telegram is
+     retained as an optional mobile push/alert companion.
+  2. **Frontend Architecture**: Built with React + TypeScript + Vite + Tailwind CSS +
+     Lucide Icons + TradingView Lightweight Charts + Chart.js, organized under
+     `frontend/` and served via Nginx in Docker or directly bundled by FastAPI.
+  3. **Backend & Real-Time Event Bus**: FastAPI backend (`app/dashboard_api.py`)
+     expanded with workflow REST endpoints (`/api/scan`, `/api/run/{symbol}`,
+     `/api/proposals/pending`, `/api/proposals/{id}/approve`, `/api/proposals/{id}/reject`,
+     `/api/positions/{id}/close`, `/api/universe/refresh`) and Server-Sent Events (SSE)
+     for live token/tool streaming (`/api/chat/stream`) and system notifications (`/api/events`).
+  4. **State Idempotency**: Atomic proposal state transitions in PostgreSQL
+     (`pending_proposals` table) ensure zero double-execution across Web and Telegram.
+- Consequence: Delivers a state-of-the-art interactive trading experience with full
+  observability, real-time streaming, and cross-channel state consistency.
+
+## ADR-028: Dynamic ATR Trailing Stops and Break-Even Profit Protection
+
+- Status: accepted
+- Context: Swing trades currently hold a static soft/hard stop throughout their lifecycle
+  until target or stop is hit. Winning positions that reach +1.5R to +2.5R can experience
+  full round-trip drawdowns to the original stop loss, deteriorating Profit Factor and
+  increasing downside variance.
+- Decision:
+  1. Introduce deterministic trailing stop rules in `app/risk.py` and `app/monitor.py`:
+     - **Break-Even Gate (+1.5R):** When price reaches `entry_price + 1.5 * initial_risk_per_share`,
+       ratchet the `soft_stop` to the breakeven level (`entry_price`).
+     - **Chandelier / ATR Trailing Gate (+2.0R):** When price reaches `entry_price + 2.0 * initial_risk_per_share`,
+       dynamically trail the `soft_stop` at `highest_price_since_entry - (1.5 * current_atr)`.
+  2. Stops are monotonically ratcheted upward (never lowered).
+  3. The walk-forward backtester (`app/backtester.py`) will evaluate trailing stop logic
+     bar-by-bar with zero lookahead bias.
+- Consequence: Protects accumulated paper gains, significantly improves strategy expectancy
+  and Profit Factor in strong trend extensions.
+
+## ADR-029: Sector Relative Strength (RS) Ranking and Sector Rotation Context
+
+- Status: accepted
+- Context: Individual stock setups have significantly higher win rates and follow-through
+  when their parent sector is outperforming the benchmark NIFTY 50 index. Currently,
+  qualitative agents evaluate general market regime but lack quantitative sector relative
+  strength (RS) metrics.
+- Decision:
+  1. Ingest daily OHLCV for major NSE Sectoral Indices (`^CNXIT`, `^CNXAUTO`, `^NSEBANK`,
+     `^CNXPHARMA`, `^CNXMETAL`, `^CNXFMCG`, `^CNXENERGY`, `^CNXREALTY`, `^CNXINFRA`).
+  2. Compute Mansfield / Mansfield-style Relative Strength (RS) over 20-day and 50-day
+     windows comparing Sector Index returns against NIFTY 50 (`^NSEI`).
+  3. Map each NIFTY 100 constituent to its primary sector industry classification.
+  4. Integrate sector RS metrics into the `screener.py` technical snapshot and provide
+     structured sector tailwinds directly to the `BullMomentumAnalyst` agent.
+- Consequence: Enhances research selectivity by focusing on tickers riding active sector
+  rotations, filtering out laggards in stagnant sectors.
+
+## ADR-030: Multi-Timeframe (MTF) Daily-Weekly Trend Confluence Screening
+
+- Status: accepted
+- Context: Daily chart setups (Breakout / Pullback / Mean Reversion) can produce false
+  signals when executing counter to the higher-timeframe Weekly secular trend.
+- Decision:
+  1. Resample historical daily bars in `app/market_data.py` into Weekly OHLCV bars (W-FRI).
+  2. Compute Weekly technical indicators: Weekly 30-period EMA (`ema_30_w`) and Weekly
+     14-period RSI (`rsi_14_w`).
+  3. Enforce Multi-Timeframe Confluence (MTF) criteria in `app/strategies.py`:
+     - `BreakoutMomentumStrategy`: Requires Daily close > 20d High AND Weekly close > Weekly 30 EMA.
+     - `PullbackInUptrendStrategy`: Requires Daily close > Daily 200 EMA AND Weekly RSI > 50.0.
+  4. Candidates failing MTF confluence are rejected deterministically during the screening pass.
+- Consequence: Eliminates low-probability noise and enhances trade win rate across volatile
+  market conditions.
+
+## ADR-031: Deterministic Sector Concentration and Correlation Risk Gates
+
+- Status: accepted
+- Context: When multiple stocks from the same industry qualify simultaneously (e.g. 4 IT
+  stocks), approving all of them creates severe portfolio concentration risk and exposes
+  the equity curve to correlated drawdown if the sector corrects.
+- Decision:
+  1. Enforce strict deterministic portfolio concentration limits in `app/risk.py`:
+     - Maximum Sector Allocation: Maximum 25.0% of total portfolio capital in any single sector.
+     - Maximum Concurrent Sector Positions: Maximum 2 open positions within the same sector.
+  2. Proposals that would violate sector exposure limits are flagged or resized deterministically.
+- Consequence: Ensures true portfolio diversification and prevents catastrophic drawdowns
+  from localized sector pullbacks.
+
+## ADR-032: Visual Chart Level Overlays & Telegram Candlestick Media Rendering
+
+- Status: accepted
+- Context: Evaluating trade proposals requires rapid visual inspection of the price structure,
+  stop loss placement, and target projection relative to recent support/resistance.
+- Decision:
+  1. **Web Cockpit**: Overlay interactive horizontal price lines on TradingView Lightweight
+     Charts corresponding to Entry, Soft Stop, Hard Stop, Target Price, and Trailing Stop.
+  2. **Telegram Bot**: Generate a high-resolution 30-bar candlestick snapshot with EMA/RSI
+     overlays using `mplfinance` and send it as a photo attachment alongside proposal cards.
+- Consequence: Operators can visually validate setups within seconds on both Desktop Web
+  and Mobile Telegram.
+
+## ADR-033: Monte Carlo Bootstrap Risk Simulation Engine for Backtesting
+
+- Status: accepted
+- Context: Backtesting historical trade sequences in chronological order gives only a single
+  realization of the equity curve, which may understate maximum potential drawdown due to
+  lucky trade ordering.
+- Decision:
+  1. Extend `app/backtester.py` to run 1,000 Monte Carlo bootstrap resamplings on historical
+     trade P&L sequences.
+  2. Calculate 95th and 99th percentile Worst-Case Drawdown %, Risk of Ruin (probability of
+     equity dropping > 20%), and Confidence Intervals for Expected Annualized Return.
+  3. Surface Monte Carlo distributions in the Web UI (`BacktestStudio.tsx`) and CLI report.
+- Consequence: Delivers institutional-grade statistical rigor to backtesting validation.
+
+## ADR-034: Beginner Wealth Copilot, Affordability Bands, GTT Helper, and 2-Tranche Compounding
+
+- Status: accepted
+- Context: Inexperienced investors with zero financial background require a plain-English,
+  guided decision-support system with capital protection, price-band affordability for whole
+  shares on NSE, copyable broker GTT parameters, and compounding workflows.
+- Decision:
+  1. **Goal-Adaptive Sizing & Affordability Banding (`app/basket_generator.py`)**:
+     - Support investment goal presets (`SAFE_GROWTH`, `VACATION_FUND`, `WEALTH_COMPOUNDING`, `LEARNING`).
+     - For capital $< ₹30,000$, filter candidates to liquid quality stocks under ₹1,500 to ensure
+       balanced whole-share distribution ($\ge 2$ shares per stock).
+     - Compute Peace of Mind Score ($0-100$) and visual Scenario Analysis (Bullish, Normal, Max Protected Risk).
+  2. **GTT Order Guidance & Slippage Traffic Light (`app/portfolio_manager.py`)**:
+     - Generate exact copyable Good-Till-Triggered (GTT) Stop-Loss and Target order parameters.
+     - Classify real-time slippage into Green (Optimal Market), Amber (Use Limit), and Red (Overextended).
+  3. **2-Tranche Exit Strategy & Dynamic Trailing Stop (`app/portfolio_manager.py`)**:
+     - Split positions into Target 1 (50% shares, +8-10%) and Target 2 (50% shares, +16-20%).
+     - Automatically ratchet stop loss to Break-Even when price advances $\ge +4\%$.
+     - Calculate Net In-Pocket P&L after estimated STT friction and STCG tax (20%).
+  4. **Daily Zen Briefing & Milestone Compounding (`app/digest_generator.py`)**:
+     - Generate morning/evening digests with "Zen / No Action Needed" reassurance.
+     - Automatically recommend fresh reinvestment baskets for freed capital upon trade exits.
+- Consequence: Transforms TrAId into a comprehensive, anxiety-free wealth building system for retail investors.
+
+## ADR-035: Read-Only Groww API Integration for Portfolio & Margin Synchronization
+
+- Status: accepted
+- Context: Users need seamless synchronization of their actual broker cash balances and Demat equity holdings without manual data entry, while maintaining strict compliance with ADR-002 (no automated order placement or broker execution by autonomous agents).
+- Decision:
+  1. **Read-Only Scope**: Integrate Groww's official Trading/Cloud API solely for read operations (`get_user_margin`, `get_holdings_for_user`, `get_positions_for_user`, `get_order_list`).
+  2. **Fail-Closed Order Guard**: Any attempt to call order creation, modification, or cancellation functions via the Groww client raises an explicit `RuntimeError("Order execution via Groww is prohibited by platform policy")`.
+  3. **Automated Token Management**: Support both TOTP-based daily token generation (`GROWW_API_KEY` + `GROWW_API_SECRET` / TOTP Secret via `pyotp`) and direct session tokens (`GROWW_ACCESS_TOKEN`) with in-memory caching.
+  4. **User-Driven Synchronization**: Provide one-click UI actions in the Beginner Wealth Copilot to auto-fill investment capital from available Demat cash and import active holdings into the portfolio tracker.
+- Consequence: Delivers frictionless broker-backed portfolio synchronization without compromising safety, custody, or regulatory compliance.
+
+## ADR-036: Groww-First Read-Only Market Data, Margin & Instrument Master Extension
+
+- Status: accepted
+- Context: ADR-035 scoped Groww to portfolio/margin sync only; the screener, monitor, and stale-approval checks still relied solely on Yahoo Finance EOD data, and no fund-affordability signal existed on trade proposals presented to the human approver. The operator holds a free-tier Groww Trading API subscription (Live Data: 10 req/s, 300/min; Non-Trading incl. margin/history: 20 req/s, 500/min per Groww's published rate limits) which comfortably covers a NIFTY 100-scale universe scan (batched ≤50 symbols/call) and is not a reason to expand the trading universe beyond its current strategy-defined scope.
+- Decision:
+  1. **Groww-First Historical Data, Automatic Fallback**: `app/market_data.py` now attempts Groww historical daily candles first (`GrowwClient.get_historical_candle_data`) via the new `GROWW_MARKET_DATA_ENABLED` setting (default `True`), and transparently falls back to the existing Yahoo Finance path (unchanged, still the always-available baseline) whenever Groww is unconfigured, unauthenticated, or errors/rate-limits. `MarketDataResult.source` gains the `"groww_historical"` provenance value; the existing PostgreSQL incremental-cache/fallback chain (ADR-026) is otherwise untouched.
+  2. **Read-Only Live Data Methods**: `GrowwClient` gains `get_quote`, `get_ltp` (batched ≤50 symbols/call), `get_ohlc`, `get_available_margin_details`, and `get_order_margin_details` — all read-only, wrapping the official `growwapi` SDK, fail-closed (return empty dict/list on any error).
+  3. **Informational Margin Check on Proposals**: `TradeProposal`/`ProposalCard`/`pending_proposals` gain optional `margin_required`/`margin_available` fields, populated in `graph._calculate_risk` via `get_order_margin_details` + `get_user_margin` when Groww is configured. This is **strictly informational** — it never gates, blocks, or auto-rejects a proposal (ADR-002/ADR-003 preserved). The Telegram proposal card (`telegram_bot._format_proposal_card`) surfaces a small warning line when the estimated margin required exceeds the operator's available Groww balance, but the human retains full Approve/Reject authority.
+  4. **Instrument Master**: `GrowwClient.get_all_instruments()` / `get_instrument_by_groww_symbol()` expose the Groww instrument CSV (lot size, tick size, ISIN) for future validation use in `universe.py`/`risk.py`; wiring this into deterministic position-sizing rounding is deferred (no evidence yet of a tick-size-related sizing defect — YAGNI) and tracked as a follow-on sub-task.
+  5. **Test Isolation Hardening**: `tests/conftest.py`'s `isolated_settings` fixture now forces `GROWW_ENABLED=false` and `GROWW_MARKET_DATA_ENABLED=false` by default so a developer's real `.env` Groww credentials can never cause live network calls during the unit test suite; individual tests opt back in with explicit mocked SDK boundaries.
+- Consequence: More accurate, broker-grade live pricing/history and fund-affordability visibility for the human approver, with zero change to execution authority — Yahoo Finance remains a fully supported fallback data source, not a replaced dependency.
+

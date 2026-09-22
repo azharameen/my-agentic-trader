@@ -194,7 +194,7 @@ empty.
 | Alternate OHLCV | EODHD | `EODHD_KEY` | Candidate low-cost EOD fallback; confirm current NSE coverage and quota before adoption |
 | Alternate OHLCV | Twelve Data | `TWELVE_DATA_KEY` | Do not plan on the free tier for NSE until coverage is verified; likely paid for this use case |
 | Fundamentals aggregator | Screener.in | No official API | Secondary discovery only; scraping and redistribution constraints apply |
-| Portfolio context | Groww supported read-only endpoints | Groww credentials | No order endpoints exposed to agents |
+| Portfolio context | Groww supported read-only endpoints | Groww credentials | No order endpoints exposed to agents; also used Groww-first (yfinance-fallback) for historical daily candles, live quote/LTP/OHLC, and margin estimates (ADR-036) |
 | Document extraction | Local PDF/text tooling | No | Prefer local parsing before paid extraction |
 
 ## Modernization Dependencies
@@ -272,6 +272,12 @@ Links are implementation references, not guarantees of availability or quota.
   selective use are mandatory.
 - Twelve Data should not be selected for NSE on the assumption that its free
   tier covers the required market. Verify coverage first or exclude it.
+- Groww's free-tier Trading API rate limits (confirmed, ADR-036): Authentication
+  5/s, 30/min; Orders 10/s, 250/min (unused — order endpoints remain blocked);
+  Live Data (quote/LTP/OHLC) 10/s, 300/min; Non-Trading (margin, order status,
+  historical candles, holdings, positions) 20/s, 500/min. LTP/OHLC calls support
+  up to 50 instruments per batch. These limits comfortably cover a NIFTY 100-scale
+  scan and are not a reason to broaden the trading universe.
 - Groww must remain a capability check until the operator confirms the actual
   supported read-only endpoints and credential scope. Do not use session-token
   scraping as an implicit integration.

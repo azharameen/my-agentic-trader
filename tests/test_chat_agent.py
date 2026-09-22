@@ -41,3 +41,55 @@ def test_build_agent_uses_create_agent_with_safety_middleware(monkeypatch):
     assert "ToolCallLimitMiddleware" in node_names
     assert "PIIMiddleware" in node_names
     get_settings.cache_clear()
+
+
+def test_get_groww_quote_returns_not_configured_when_disabled(monkeypatch):
+    """ADR-036: read-only live quote tool must be fail-closed when Groww is off."""
+    monkeypatch.setenv("GROWW_ENABLED", "false")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    result = chat_agent.get_groww_quote("RELIANCE")
+    assert "not enabled or configured" in result
+    get_settings.cache_clear()
+
+
+def test_get_groww_quote_formats_live_quote(monkeypatch):
+    """ADR-036: real-time quote tool reports LTP/day change from Groww."""
+    monkeypatch.setenv("GROWW_ENABLED", "true")
+    monkeypatch.setenv("GROWW_ACCESS_TOKEN", "valid_token")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    from app import groww_client
+
+    client = groww_client.GrowwClient()
+
+    def _fake_status():
+        return groww_client.GrowwStatus(configured=True, authenticated=True, status="CONNECTED")
+
+    def _fake_quote(symbol):
+        return {
+            "last_price": 2500.5,
+            "day_change": 12.5,
+            "day_change_perc": 0.5,
+            "high_trade_range": 2510.0,
+            "low_trade_range": 2480.0,
+            "ohlc": {"open": 2490.0, "high": 2510.0, "low": 2480.0, "close": 2500.5},
+            "volume": 10000,
+            "week_52_high": 2600.0,
+            "week_52_low": 2200.0,
+        }
+
+    client.get_connection_status = _fake_status
+    client.get_quote = _fake_quote
+
+    import app.groww_client as groww_client_mod
+
+    monkeypatch.setattr(groww_client_mod, "get_groww_client", lambda: client)
+
+    result = chat_agent.get_groww_quote("reliance.NS")
+    assert '"symbol": "RELIANCE"' in result
+    assert '"last_price": 2500.5' in result
+    get_settings.cache_clear()

@@ -46,6 +46,7 @@ from app import (
     risk,
     screener,
     store,
+    universe,
 )
 from app.llm import provider_metadata
 from app.state import ProposalCard, TradeProposal, TradingState
@@ -106,17 +107,59 @@ def _calculate_risk(state: TradingState) -> dict:
     )
     if event_reason:
         return {"human_decision": event_reason}
+
+    # Deterministic Sector Concentration & Correlation Gate (ADR-031)
+    sector = universe.get_symbol_sector(symbol)
+    open_trades = executor.fetch_all_trades()
+    current_cap = executor.get_current_capital()
+    sector_reason = risk.evaluate_sector_exposure_gate(
+        symbol=symbol,
+        sector=sector,
+        open_trades=open_trades,
+        portfolio_capital=current_cap,
+    )
+    if sector_reason:
+        return {"human_decision": "REJECTED_RISK", "rejection_reason": sector_reason}
+
     risk_multiplier = float(state.get("risk_multiplier") if state.get("risk_multiplier") is not None else 1.0)
     proposal = risk.calculate_risk(
         symbol=symbol,
         entry_price=state["daily_close"],
         atr=state["atr"],
-        portfolio_capital=executor.get_current_capital(),
+        portfolio_capital=current_cap,
         risk_multiplier=risk_multiplier,
         strategy_name=state.get("strategy_name"),
     )
     if proposal is None:
         return {"human_decision": "REJECTED_RISK", "rejection_reason": "POSITION_SIZE_OR_RISK"}
+
+    # Informational Groww margin/fund-availability check (ADR-036).
+    # Read-only: never gates or blocks the proposal, purely surfaced to the
+    # human approver in the Telegram card.
+    try:
+        from app.groww_client import get_groww_client
+
+        groww = get_groww_client()
+        if groww.is_configured():
+            estimate = groww.get_order_margin_details(
+                trading_symbol=symbol,
+                quantity=proposal.quantity,
+                transaction_type="BUY",
+                price=proposal.entry_price,
+            )
+            margin_required = estimate.get("total_requirement") if estimate else None
+            balance = groww.get_user_margin()
+            margin_available = balance.available_cash if balance.available_cash else None
+            if margin_required is not None:
+                proposal = proposal.model_copy(
+                    update={
+                        "margin_required": float(margin_required),
+                        "margin_available": float(margin_available) if margin_available is not None else None,
+                    }
+                )
+    except Exception as exc:  # noqa: BLE001 - informational only, never blocks the proposal
+        logger.debug("Groww margin estimate unavailable for %s: %s", symbol, exc)
+
     return {"order_proposal": proposal.model_dump(mode="json")}
 
 
@@ -139,6 +182,8 @@ def _human_approval(state: TradingState) -> dict:
         quantity=proposal.quantity,
         risk_amount=proposal.risk_amount,
         risk_to_reward=proposal.risk_to_reward,
+        margin_required=proposal.margin_required,
+        margin_available=proposal.margin_available,
         thesis=assessment.thesis_rationale if assessment else "",
         catalyst_type=assessment.catalyst_type if assessment else "UNKNOWN",
         proposed_at=datetime.now(timezone.utc),

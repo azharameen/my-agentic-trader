@@ -47,10 +47,23 @@ class PullbackInUptrendStrategy:
         if any(pd.isna(value) for value in values):
             return False
         price, ema_200, rsi, volume, avg_volume = values
+
+        # Multi-Timeframe Confluence (ADR-030)
+        w_rsi = row.get("weekly_rsi_14") if "weekly_rsi_14" in row else row.get("rsi_14_w")
+        w_ema = row.get("weekly_ema_30") if "weekly_ema_30" in row else row.get("ema_30_w")
+        mtf_pass = True
+        if w_rsi is not None and not pd.isna(w_rsi):
+            if float(w_rsi) < 45.0:
+                mtf_pass = False
+        if w_ema is not None and not pd.isna(w_ema):
+            if price < float(w_ema):
+                mtf_pass = False
+
         return bool(
             price > ema_200
             and rsi < settings.RSI_OVERSOLD_MAX
             and volume > avg_volume * settings.VOLUME_RATIO_MIN
+            and mtf_pass
         )
 
 
@@ -74,10 +87,23 @@ class BreakoutMomentumStrategy:
         if any(pd.isna(value) for value in values):
             return False
         price, high_20, ema_50, volume, avg_volume = values
+
+        # Multi-Timeframe Confluence (ADR-030)
+        w_ema = row.get("weekly_ema_30") if "weekly_ema_30" in row else row.get("ema_30_w")
+        w_rsi = row.get("weekly_rsi_14") if "weekly_rsi_14" in row else row.get("rsi_14_w")
+        mtf_pass = True
+        if w_ema is not None and not pd.isna(w_ema):
+            if price < float(w_ema):
+                mtf_pass = False
+        if w_rsi is not None and not pd.isna(w_rsi):
+            if float(w_rsi) < 50.0:
+                mtf_pass = False
+
         return bool(
             price > high_20
             and price > ema_50
             and volume > avg_volume * 1.5
+            and mtf_pass
         )
 
 
@@ -102,11 +128,19 @@ class BollingerMeanReversionStrategy:
         if any(pd.isna(value) for value in values):
             return False
         price, bb_lower, rsi, ema_200, volume, avg_volume = values
+
+        # Multi-Timeframe Confluence (ADR-030)
+        w_ema = row.get("ema_30_w")
+        mtf_pass = True
+        if w_ema is not None and not pd.isna(w_ema):
+            mtf_pass = bool(price >= float(w_ema) * 0.85)
+
         return bool(
             price <= bb_lower
             and rsi < 30.0
             and price > ema_200
             and volume > avg_volume * settings.VOLUME_RATIO_MIN
+            and mtf_pass
         )
 
 

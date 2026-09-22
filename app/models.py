@@ -47,6 +47,10 @@ class TechnicalSnapshot(DictCompatibleModel):
     bb_lower: Optional[float] = Field(default=None, description="Bollinger lower band (20, 2.0).")
     bb_middle: Optional[float] = Field(default=None, description="Bollinger middle band (20-SMA).")
     bb_upper: Optional[float] = Field(default=None, description="Bollinger upper band (20, 2.0).")
+    sector_name: Optional[str] = Field(default=None, description="Standardized sector classification.")
+    sector_rs_20d: Optional[float] = Field(default=None, description="20-day Sector Relative Strength vs NIFTY 50.")
+    weekly_ema_30: Optional[float] = Field(default=None, description="Weekly 30-period EMA (MTF).")
+    weekly_rsi_14: Optional[float] = Field(default=None, description="Weekly 14-period RSI (MTF).")
     qualifies: bool = Field(default=False, description="Whether setup criteria passed.")
     strategy_name: Optional[str] = Field(default=None, description="Primary resolved strategy.")
     secondary_strategies: list[str] = Field(

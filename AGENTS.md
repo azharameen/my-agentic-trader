@@ -18,9 +18,9 @@ All development follows the formal governance lifecycle in [`docs/sdlc-process.m
   1. *Gate 1 (Planning):* Tasks move to `todo` only when scoped with accepted ADRs and full nested hierarchy (Task → Sub-Tasks → Milestones → Checklists).
   2. *Gate 2 (Implementation):* Maximum 1–2 `active` tasks at a time. Never start coding without meeting entry criteria.
   3. *Gate 3 (Verification):* Move to `inreview` only when all checklists are `[x]`, `python -m pytest -q` passes (100%), and `ruff`/`mypy` checks pass.
-  4. *Gate 4 (Completion):* Move to `done` only after synchronizing `prd.md`, `architecture.md`, and `reference.md`.
+  4. *Gate 4 (Completion & Container Build):* Move to `done` only after synchronizing `prd.md`, `architecture.md`, `reference.md`, building frontend assets (`cd frontend && npm run build`), and building Docker containers (`docker compose build` / `docker compose up --build -d`) so that the latest live app is running and accessible.
 - **Folder-Level Rule Enforcement:** Specialized subfolder instructions apply:
-  - [`app/AGENTS.md`](app/AGENTS.md): Pure Python risk math, fail-closed handlers, typed models, secret masking.
+  - [`app/AGENTS.md`](app/AGENTS.md): Pure Python risk math, fail-closed handlers, typed models, secret masking, and post-task Docker build.
   - [`tests/AGENTS.md`](tests/AGENTS.md): `tmp_path` isolation, external network mocking, deterministic assertions.
   - [`docs/AGENTS.md`](docs/AGENTS.md): Canonical documentation maintenance, ADR requirements, task ledger formatting.
   - [`config/AGENTS.md`](config/AGENTS.md): `get_settings()` singleton, `SecretStr` for credentials, `.env.example` synchrony.
@@ -33,7 +33,8 @@ python -m app.main run <SYMBOL>                 # run a single symbol through th
 python -m app.main refresh-universe             # force a live refresh of the NIFTY 100 constituent list
 python -m app.main evaluate                     # report paper trading performance against NIFTY 100 benchmark
 python -m app.main serve                        # start scheduler + Telegram bot (long-running)
-docker compose up --build                       # two services (app + postgres:16-alpine sidecar)
+python -m app.main dashboard                    # start Visual Analytics Web Dashboard (FastAPI + SPA)
+docker compose up --build                       # three services (postgres sidecar + trading-engine + dashboard)
 pytest -q                                       # unit tests (risk, screener, universe, graph, monitor)
 ```
 

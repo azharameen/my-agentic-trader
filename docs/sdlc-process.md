@@ -98,6 +98,8 @@ checkbox in the corresponding gate.
 - [ ] **PRD Synchronization:** `docs/prd.md` updated if feature capabilities, constraints, or metrics changed.
 - [ ] **Architecture Synchronization:** `docs/architecture.md` updated if component data flow, persistence, or agent roles changed.
 - [ ] **Reference Synchronization:** `docs/reference.md` updated if new sources, dependencies, or configuration keys were introduced.
+- [ ] **Frontend Asset Build:** `cd frontend && npm run build` compiled with 0 errors.
+- [ ] **Docker Container Build:** `docker compose build` (or `docker compose up --build -d`) executed so the latest containerized application is running and verifiable.
 - [ ] **Walkthrough Created/Updated:** `walkthrough.md` summarizes the exact changes, test commands, and verification logs.
 - [ ] Code reviewed against hard invariants by multi-agent review or human operator.
 

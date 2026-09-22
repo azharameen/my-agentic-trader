@@ -111,16 +111,28 @@ DEBATE = "debate"
 
 def _format_proposal_card(payload: dict) -> str:
     """Render the interrupt payload as a Markdown proposal card."""
+    margin_line = ""
+    margin_required = payload.get("margin_required")
+    margin_available = payload.get("margin_available")
+    if margin_required is not None:
+        margin_line = f"Margin Required: ₹{margin_required:.2f}"
+        if margin_available is not None:
+            margin_line += f" (Available: ₹{margin_available:.2f})"
+            if margin_required > margin_available:
+                margin_line += "\n⚠️ _Estimated margin exceeds your available Groww balance._"
+        margin_line += "\n"
+
     return (
-        "📊 *Trade Proposal*\n"
+        "?? *Trade Proposal*\n"
         f"Symbol: *{payload.get('symbol', '?')}*\n"
-        f"Entry: ₹{payload.get('entry_price', 0):.2f}\n"
-        f"Soft Stop: ₹{payload.get('soft_stop', 0):.2f}\n"
-        f"Hard Stop: ₹{payload.get('hard_stop', 0):.2f}\n"
-        f"Target: ₹{payload.get('target_price', 0):.2f}\n"
+        f"Entry: ?{payload.get('entry_price', 0):.2f}\n"
+        f"Soft Stop: ?{payload.get('soft_stop', 0):.2f}\n"
+        f"Hard Stop: ?{payload.get('hard_stop', 0):.2f}\n"
+        f"Target: ?{payload.get('target_price', 0):.2f}\n"
         f"Quantity: {payload.get('quantity', 0)}\n"
-        f"Risk: ₹{payload.get('risk_amount', 0):.2f}\n"
+        f"Risk: ?{payload.get('risk_amount', 0):.2f}\n"
         f"R:R: {payload.get('risk_to_reward', 0):.2f}\n"
+        f"{margin_line}"
         f"Catalyst: {payload.get('catalyst_type', 'UNKNOWN')}\n"
         f"_Thesis: {payload.get('thesis', '')}_"
     )

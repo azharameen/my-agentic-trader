@@ -105,6 +105,30 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["bb_lower_20"] = bb_middle - 2.0 * bb_std
     df["bb_upper_20"] = bb_middle + 2.0 * bb_std
 
+    # Multi-Timeframe (MTF) Weekly Context (ADR-030)
+    try:
+        raw_weekly = market_data.resample_to_weekly(df)
+        if not raw_weekly.empty and len(raw_weekly) >= 15:
+            w_close = raw_weekly["Close"]
+            w_ema30 = w_close.ewm(span=30, adjust=False).mean()
+
+            w_delta = w_close.diff()
+            w_gain = w_delta.clip(lower=0)
+            w_loss = (-w_delta).clip(lower=0)
+            w_avg_gain = w_gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+            w_avg_loss = w_loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+            w_rs = w_avg_gain / w_avg_loss.replace(0, pd.NA)
+            w_rsi14 = 100 - (100 / (1 + w_rs))
+
+            raw_weekly["ema_30_w"] = w_ema30
+            raw_weekly["rsi_14_w"] = w_rsi14
+
+            # Map weekly indicators back to daily dates
+            df["ema_30_w"] = raw_weekly["ema_30_w"].reindex(df.index, method="ffill")
+            df["rsi_14_w"] = raw_weekly["rsi_14_w"].reindex(df.index, method="ffill")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not compute weekly indicators: %s", exc)
+
     return df
 
 
@@ -147,11 +171,15 @@ def get_symbol_snapshot(symbol: str) -> Optional[TechnicalSnapshot]:
     qualifies = bool(primary_strategy is not None or passes_override)
     strategy_name = primary_strategy.name if primary_strategy else (settings.SETUP_STRATEGY if qualifies else None)
 
+    from app import universe as app_universe
+    clean_sym = canonical_symbol(symbol)
+    sector_name = app_universe.get_symbol_sector(clean_sym)
+
     def _safe_float(val: object) -> Optional[float]:
         return float(val) if val is not None and not pd.isna(val) else None
 
     snapshot = TechnicalSnapshot(
-        symbol=canonical_symbol(symbol),
+        symbol=clean_sym,
         daily_close=float(latest["close"]),
         rsi=float(latest["rsi_14"]),
         ema_200=float(latest["ema_200"]),
@@ -163,6 +191,9 @@ def get_symbol_snapshot(symbol: str) -> Optional[TechnicalSnapshot]:
         bb_lower=_safe_float(latest.get("bb_lower_20")),
         bb_middle=_safe_float(latest.get("bb_middle_20")),
         bb_upper=_safe_float(latest.get("bb_upper_20")),
+        sector_name=sector_name,
+        weekly_ema_30=_safe_float(latest.get("ema_30_w")),
+        weekly_rsi_14=_safe_float(latest.get("rsi_14_w")),
         qualifies=qualifies,
         strategy_name=strategy_name,
         secondary_strategies=secondary_strategies,

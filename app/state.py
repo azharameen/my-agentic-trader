@@ -74,6 +74,14 @@ class TradeProposal(BaseModel):
     quantity: int = Field(description="Position size from the 1% risk rule.")
     risk_amount: float = Field(description="Absolute INR risked (capital * 1%).")
     risk_to_reward: float = Field(description="Computed R:R ratio (must be >= 2.0).")
+    margin_required: float | None = Field(
+        default=None,
+        description="Informational Groww fund/margin requirement estimate for this order (ADR-036). None if unavailable.",
+    )
+    margin_available: float | None = Field(
+        default=None,
+        description="Informational Groww available cash/margin at proposal time (ADR-036). None if unavailable.",
+    )
 
 
 class ProposalCard(TradeProposal):

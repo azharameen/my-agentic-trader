@@ -44,6 +44,15 @@ requests>=2.31.0
 opentelemetry-api>=1.25.0
 opentelemetry-sdk>=1.25.0
 
+# --- Web Dashboard (Phase 7 Visual Analytics, ADR-025) -----------------------
+fastapi>=0.110.0
+uvicorn>=0.28.0
+
+
+# --- Broker & Context Integration (Read-Only Groww, ADR-035) --------------
+growwapi>=0.1.0
+pyotp>=2.9.0
+
 # --- Testing (dev only) ------------------------------------------------------
 pytest>=8.0.0
 pytest-mock>=3.12.0

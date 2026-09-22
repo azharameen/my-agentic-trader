@@ -16,7 +16,7 @@ import yfinance as yf
 from pydantic import BaseModel, Field
 
 from app.executor import SLIPPAGE_PCT
-from app.risk import calculate_delivery_costs, calculate_risk
+from app.risk import calculate_delivery_costs, calculate_risk, calculate_trailing_stop
 from app.screener import _compute_indicators, _to_nse_symbol
 from app.strategies import evaluate_all_strategies
 from config.settings import get_settings
@@ -36,9 +36,11 @@ class BacktestTrade(BaseModel):
     soft_stop: float
     hard_stop: float
     target_price: float
+    highest_price: Optional[float] = None
+    trailing_stop: Optional[float] = None
     exit_date: Optional[str] = None
     exit_price: Optional[float] = None
-    exit_reason: Optional[str] = None  # TARGET_HIT, STOPPED_OUT, END_OF_DATA
+    exit_reason: Optional[str] = None  # TARGET_HIT, STOPPED_OUT, TRAILING_STOP_HIT, BREAK_EVEN_STOP_HIT, END_OF_DATA
     gross_pnl: Optional[float] = None
     net_pnl: Optional[float] = None
     r_multiple: Optional[float] = None
@@ -65,6 +67,7 @@ class BacktestResult(BaseModel):
     average_r: float
     trades: list[BacktestTrade] = Field(default_factory=list)
     equity_curve: list[dict[str, Any]] = Field(default_factory=list)
+    monte_carlo_stats: Optional[dict[str, Any]] = None
 
 
 def _load_historical_ohlcv(
@@ -87,6 +90,8 @@ def _load_historical_ohlcv(
         raise ValueError(f"No historical market data returned for {nse_symbol}")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+    if hasattr(df.index, "tz") and df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
     return df
 
 
@@ -124,13 +129,25 @@ def run_backtest(
     if isinstance(raw_df.columns, pd.MultiIndex):
         raw_df.columns = raw_df.columns.get_level_values(0)
 
+    if hasattr(raw_df.index, "tz") and raw_df.index.tz is not None:
+        raw_df.index = raw_df.index.tz_localize(None)
+
     indicators_df = _compute_indicators(raw_df)
 
-    # Filter evaluation window from start_date to end_date
+    # Filter evaluation window from start_date to end_date (ensure timezone-naive)
+    if hasattr(indicators_df.index, "tz") and indicators_df.index.tz is not None:
+        indicators_df.index = indicators_df.index.tz_localize(None)
     indicators_df.index = pd.to_datetime(indicators_df.index)
-    eval_mask = (indicators_df.index >= pd.to_datetime(start_date)) & (
-        indicators_df.index <= pd.to_datetime(end_date)
-    )
+
+    start_ts = pd.to_datetime(start_date)
+    if hasattr(start_ts, "tz") and start_ts.tz is not None:
+        start_ts = start_ts.tz_localize(None)
+
+    end_ts = pd.to_datetime(end_date)
+    if hasattr(end_ts, "tz") and end_ts.tz is not None:
+        end_ts = end_ts.tz_localize(None)
+
+    eval_mask = (indicators_df.index >= start_ts) & (indicators_df.index <= end_ts)
     eval_df = indicators_df.loc[eval_mask]
 
     if eval_df.empty:
@@ -150,17 +167,34 @@ def run_backtest(
         close_price = float(row["close"])
 
         # ------------------------------------------------------------------ #
-        # 1. Manage Active Position (Check Stops / Targets)
+        # 1. Manage Active Position (Check Stops / Targets / Trailing Stops)
         # ------------------------------------------------------------------ #
         if open_trade is not None:
             exit_price: Optional[float] = None
             exit_reason: Optional[str] = None
 
-            # Hard Stop Hit (check if Low breached Hard Stop)
+            # Track highest price achieved
+            open_trade.highest_price = max(open_trade.highest_price or open_trade.entry_price, high_price)
+
+            # Dynamic ATR Trailing Stop (ADR-028)
+            atr_val = float(row.get("atr_14") or 10.0)
+            new_trailing, stop_mode = calculate_trailing_stop(
+                entry_price=open_trade.entry_price,
+                hard_stop=open_trade.hard_stop,
+                highest_price=open_trade.highest_price,
+                current_price=close_price,
+                atr=atr_val,
+                previous_trailing_stop=open_trade.trailing_stop,
+            )
+            open_trade.trailing_stop = new_trailing
+
+            # Exit Evaluation Order: Hard Stop -> Trailing/Breakeven Stop -> Target Hit
             if low_price <= open_trade.hard_stop:
                 exit_price = min(open_price, open_trade.hard_stop)
                 exit_reason = "STOPPED_OUT"
-            # Target Hit (check if High reached Target)
+            elif open_trade.trailing_stop and low_price <= open_trade.trailing_stop and open_trade.trailing_stop > open_trade.hard_stop:
+                exit_price = min(open_price, open_trade.trailing_stop)
+                exit_reason = "TRAILING_STOP_HIT" if stop_mode == "ATR_TRAILING" else "BREAK_EVEN_STOP_HIT"
             elif high_price >= open_trade.target_price:
                 exit_price = max(open_price, open_trade.target_price)
                 exit_reason = "TARGET_HIT"
@@ -313,6 +347,8 @@ def run_backtest(
     else:
         sharpe_ratio = 0.0
 
+    mc_stats = run_monte_carlo_simulation(completed_trades, initial_capital=capital)
+
     return BacktestResult(
         symbol=sym,
         start_date=start_date,
@@ -331,6 +367,7 @@ def run_backtest(
         average_r=round(avg_r, 2),
         trades=completed_trades,
         equity_curve=equity_curve,
+        monte_carlo_stats=mc_stats,
     )
 
 
@@ -369,3 +406,107 @@ def format_backtest_report(result: BacktestResult) -> str:
 
     lines.append("=================================================================")
     return "\n".join(lines)
+
+
+def run_monte_carlo_simulation(
+    trades: list[BacktestTrade],
+    initial_capital: float = 100000.0,
+    num_simulations: int = 1000,
+) -> dict[str, Any]:
+    """Execute Monte Carlo bootstrap resamplings on historical trade outcomes (ADR-033).
+
+    Parameters
+    ----------
+    trades:
+        List of completed BacktestTrade objects.
+    initial_capital:
+        Initial baseline portfolio equity in INR.
+    num_simulations:
+        Number of randomized bootstrap iterations (default 1,000).
+
+    Returns
+    -------
+    dict[str, Any]
+        Monte Carlo risk metrics (95th/99th percentile Max Drawdown, Ruin Risk %,
+        Confidence intervals for net return).
+    """
+    import random
+    import numpy as np
+
+    closed_pnl = [t.net_pnl for t in trades if t.net_pnl is not None]
+    if not closed_pnl:
+        return {
+            "num_simulations": num_simulations,
+            "sample_trades_count": 0,
+            "median_max_drawdown_pct": 0.0,
+            "p95_max_drawdown_pct": 0.0,
+            "p99_max_drawdown_pct": 0.0,
+            "probability_of_ruin_pct": 0.0,
+            "expected_return_p05_pct": 0.0,
+            "expected_return_p50_pct": 0.0,
+            "expected_return_p95_pct": 0.0,
+            "distribution_buckets": [],
+        }
+
+    n_trades = len(closed_pnl)
+    drawdowns = []
+    final_returns = []
+    ruin_count = 0
+    ruin_threshold = initial_capital * 0.80  # 20% drawdown threshold
+
+    for _ in range(num_simulations):
+        sampled_pnl = random.choices(closed_pnl, k=n_trades)
+        equity = initial_capital
+        peak = initial_capital
+        max_dd = 0.0
+        ruined = False
+
+        for pnl in sampled_pnl:
+            equity += pnl
+            if equity > peak:
+                peak = equity
+            dd = (peak - equity) / peak if peak > 0 else 0.0
+            if dd > max_dd:
+                max_dd = dd
+            if equity <= ruin_threshold:
+                ruined = True
+
+        if ruined:
+            ruin_count += 1
+        drawdowns.append(max_dd * 100)
+        ret_pct = ((equity - initial_capital) / initial_capital) * 100
+        final_returns.append(ret_pct)
+
+    p95_dd = float(np.percentile(drawdowns, 95))
+    p99_dd = float(np.percentile(drawdowns, 99))
+    p50_dd = float(np.median(drawdowns))
+
+    p05_ret = float(np.percentile(final_returns, 5))
+    p50_ret = float(np.percentile(final_returns, 50))
+    p95_ret = float(np.percentile(final_returns, 95))
+
+    ruin_prob = (ruin_count / num_simulations) * 100
+
+    # Build histogram distribution buckets for UI visualization
+    hist, bin_edges = np.histogram(final_returns, bins=10)
+    distribution_buckets = [
+        {
+            "range": f"{bin_edges[i]:.1f}% to {bin_edges[i+1]:.1f}%",
+            "count": int(hist[i]),
+        }
+        for i in range(len(hist))
+    ]
+
+    return {
+        "num_simulations": num_simulations,
+        "sample_trades_count": n_trades,
+        "median_max_drawdown_pct": round(p50_dd, 2),
+        "p95_max_drawdown_pct": round(p95_dd, 2),
+        "p99_max_drawdown_pct": round(p99_dd, 2),
+        "probability_of_ruin_pct": round(ruin_prob, 2),
+        "expected_return_p05_pct": round(p05_ret, 2),
+        "expected_return_p50_pct": round(p50_ret, 2),
+        "expected_return_p95_pct": round(p95_ret, 2),
+        "distribution_buckets": distribution_buckets,
+    }
+

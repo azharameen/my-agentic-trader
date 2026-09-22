@@ -63,6 +63,41 @@ services:
     networks:
       - trading-net
 
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nifty-swing-trading:latest
+    container_name: nifty-trading-dashboard
+    command: ["python", "-m", "app.main", "dashboard", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-trader_admin}:${POSTGRES_PASSWORD:-trader_secret}@postgres:5432/${POSTGRES_DB:-trader_db}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - trading-net
+
 volumes:
   pgdata:
     driver: local

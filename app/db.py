@@ -69,8 +69,14 @@ def fetchone(query: str, params: Union[tuple, list, dict] = ()) -> Optional[dict
     return rows[0] if rows else None
 
 
+_tables_initialized = False
+
+
 def init_all_tables() -> None:
     """Create all required PostgreSQL relational tables and indexes (idempotent)."""
+    global _tables_initialized
+    if _tables_initialized:
+        return
     ddl_audit = """
     CREATE TABLE IF NOT EXISTS trade_audit_log (
         trade_id        TEXT PRIMARY KEY,
@@ -101,7 +107,9 @@ def init_all_tables() -> None:
         llm_provider    TEXT,
         llm_model       TEXT,
         cache_hits      TEXT,
-        mistake_category TEXT
+        mistake_category TEXT,
+        highest_price   DOUBLE PRECISION,
+        trailing_stop   DOUBLE PRECISION
     );
     """
 
@@ -161,6 +169,81 @@ def init_all_tables() -> None:
     );
     """
 
+    ddl_portfolios = """
+    CREATE TABLE IF NOT EXISTS user_portfolios (
+        portfolio_id    TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL DEFAULT 'default_user',
+        created_at      TEXT NOT NULL,
+        initial_capital DOUBLE PRECISION NOT NULL,
+        allocated_capital DOUBLE PRECISION NOT NULL,
+        cash_balance    DOUBLE PRECISION NOT NULL,
+        risk_vibe       TEXT NOT NULL,
+        status          TEXT NOT NULL DEFAULT 'ACTIVE'
+    );
+    """
+
+    ddl_positions = """
+    CREATE TABLE IF NOT EXISTS user_positions (
+        position_id     TEXT PRIMARY KEY,
+        portfolio_id    TEXT NOT NULL,
+        user_id         TEXT NOT NULL DEFAULT 'default_user',
+        symbol          TEXT NOT NULL,
+        shares          INTEGER NOT NULL,
+        suggested_price DOUBLE PRECISION NOT NULL,
+        entry_price     DOUBLE PRECISION NOT NULL,
+        target_price    DOUBLE PRECISION NOT NULL,
+        stop_loss_price DOUBLE PRECISION NOT NULL,
+        target2_price   DOUBLE PRECISION,
+        target1_shares  INTEGER,
+        target2_shares  INTEGER,
+        tranche1_exited BOOLEAN DEFAULT FALSE,
+        breakeven_locked BOOLEAN DEFAULT FALSE,
+        holding_period  TEXT,
+        status          TEXT NOT NULL DEFAULT 'ACTIVE',
+        created_at      TEXT NOT NULL,
+        filled_at       TEXT,
+        exit_price      DOUBLE PRECISION,
+        exit_at         TEXT,
+        realized_pnl    DOUBLE PRECISION,
+        highest_price   DOUBLE PRECISION,
+        trailing_stop   DOUBLE PRECISION,
+        layman_rationale TEXT,
+        sector          TEXT,
+        broker_name     TEXT
+    );
+    """
+
+    ddl_digests = """
+    CREATE TABLE IF NOT EXISTS daily_digests (
+        digest_id       TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL DEFAULT 'default_user',
+        digest_date     TEXT NOT NULL,
+        digest_type     TEXT NOT NULL,
+        portfolio_id    TEXT,
+        title           TEXT NOT NULL,
+        summary         TEXT NOT NULL,
+        payload         TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+    );
+    """
+
+    ddl_mutual_funds = """
+    CREATE TABLE IF NOT EXISTS user_mutual_funds (
+        folio_id        TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL DEFAULT 'default_user',
+        scheme_name     TEXT NOT NULL,
+        folio_number    TEXT NOT NULL,
+        units           DOUBLE PRECISION NOT NULL,
+        nav             DOUBLE PRECISION NOT NULL,
+        invested_amount DOUBLE PRECISION NOT NULL,
+        current_value   DOUBLE PRECISION NOT NULL,
+        pnl             DOUBLE PRECISION NOT NULL,
+        pnl_pct         DOUBLE PRECISION NOT NULL,
+        asset_category  TEXT NOT NULL DEFAULT 'EQUITY',
+        last_updated    TEXT NOT NULL
+    );
+    """
+
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_audit_status ON trade_audit_log(status);",
         "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON trade_audit_log(timestamp);",
@@ -168,15 +251,21 @@ def init_all_tables() -> None:
         "CREATE INDEX IF NOT EXISTS idx_outbox_created ON notification_outbox(created_at);",
         "CREATE INDEX IF NOT EXISTS idx_evidence_symbol ON evidence_snapshots(symbol);",
         "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_ts ON ohlcv_daily_bars(symbol, timestamp DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_portfolios_user ON user_portfolios(user_id);",
+        "CREATE INDEX IF NOT EXISTS idx_positions_portfolio ON user_positions(portfolio_id);",
+        "CREATE INDEX IF NOT EXISTS idx_positions_symbol ON user_positions(symbol);",
+        "CREATE INDEX IF NOT EXISTS idx_positions_status ON user_positions(status);",
+        "CREATE INDEX IF NOT EXISTS idx_digests_user_date ON daily_digests(user_id, digest_date);",
+        "CREATE INDEX IF NOT EXISTS idx_mutual_funds_user ON user_mutual_funds(user_id);",
     ]
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        for statement in [ddl_audit, ddl_outbox, ddl_cache, ddl_evidence, ddl_threads, ddl_ohlcv] + indexes:
+        for statement in [ddl_audit, ddl_outbox, ddl_cache, ddl_evidence, ddl_threads, ddl_ohlcv, ddl_portfolios, ddl_positions, ddl_digests, ddl_mutual_funds] + indexes:
             cursor.execute(statement)
 
+    _tables_initialized = True
     logger.info("All relational tables and indexes initialized successfully.")
-
 
 
 def reset() -> None:
@@ -188,3 +277,4 @@ def reset() -> None:
         except Exception:  # noqa: BLE001
             pass
         _pool = None
+

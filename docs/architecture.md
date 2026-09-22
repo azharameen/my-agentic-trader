@@ -3,8 +3,10 @@
 ## Purpose
 
 This system is a local-first NIFTY 100 cash-equity research and paper-trading
-assistant. It produces auditable research proposals; it does not place live
-orders. Telegram is the human control plane.
+cockpit. It produces auditable research proposals; it does not place live
+orders. The **Primary Interactive Cockpit** is a complete React + TypeScript Web
+Application (`frontend/` + FastAPI backend), supported by Telegram as an optional
+mobile alert companion.
 
 The next release is intentionally NIFTY 100-only. Broader NSE/BSE coverage is a
 separate Phase 2 source-policy decision, not an implicit implementation task.
@@ -29,12 +31,13 @@ separate Phase 2 source-policy decision, not an implicit implementation task.
 ## Current Implemented Architecture
 
 The codebase operates as a local-first, containerized, PostgreSQL-backed
-multi-strategy, multi-agent decision-support platform with Telegram as its primary
-control plane:
+multi-strategy, multi-agent decision-support platform with a full-featured
+interactive React Web Application as its primary cockpit (ADR-027) and Telegram
+as its mobile companion:
 
 ```mermaid
 flowchart TD
-    A[Scheduler or Telegram /scan] --> B[Universe Resolver: app.universe]
+    A[Scheduler, Web Cockpit /scan, or Telegram /scan] --> B[Universe Resolver: app.universe]
     B --> C[Incremental OHLCV Loader: app.market_data]
     C --> D{Market Macro Gate: ^NSEI & ^INDIAVIX?}
     D -->|Fail / Veto| R[Rejected Terminal]
@@ -49,15 +52,15 @@ flowchart TD
     
     F3 -->|Fail| R
     F3 -->|Pass| G[Deterministic Strategy Risk Engine: app.risk]
-    G --> H[Telegram HITL Proposal Card: [Approve] [Reject] [🔬 Debate]]
+    G --> H[HITL Proposal Card: Web Cockpit & Telegram]
     H --> I[Paper Broker Execution: app.executor]
     I --> J[(PostgreSQL 16 Sidecar: trader_db)]
     J --- Checkpoints[PostgresSaver: checkpoints & writes]
     J --- Store[PostgresStore: operator profile & memory]
-    J --- AuditTable[trade_audit_log, research_cache, evidence_snapshots]
-    J --> K[Conversational Research Chat Agent: app.chat_agent]
-    J --> L[/positions & Daily Scan Digest: app.telegram_bot]
-    J -.-> M[Phase 7: Optional React Visual Analytics Dashboard]
+    J --- AuditTable[trade_audit_log, pending_proposals, research_cache]
+    J --> K[AI Copilot Chat Agent with SSE Streaming: app.chat_agent]
+    J --> L[Web Cockpit: React + TypeScript + TradingView + Backtesting]
+    J --> M[Telegram Bot: Mobile Push Alerts & Inline Approvals]
 ```
 
 ### Key Architectural Characteristics:
@@ -75,19 +78,17 @@ flowchart TD
 
 ## Architectural Evolution Matrix
 
-| Area | Current Implemented State | Target Phase 7 State | Task ID | ADR |
+| Area | Current Implemented State | Target Phase 9 State | Task ID | ADR |
 |---|---|---|---|---|
-| **Persistence** | Unified PostgreSQL 16 sidecar container | PostgreSQL 16 with automated replication / backup | T-026 | ADR-023 |
-| **Screener** | Simultaneous multi-strategy (`BREAKOUT`, `PULLBACK`, `MEAN_REVERSION`) | Configurable operator strategy weights | T-028 | ADR-024 |
-| **Macro Gates** | Automated Yahoo Finance `^NSEI` and `^INDIAVIX` live ingestion | Multi-timeframe sector rotation overlays | T-004 | ADR-011 |
-| **Qualitative Research** | Sequential multi-agent subgraph (Bear $\rightarrow$ Bull $\rightarrow$ Synth) with early exit | Dynamic multi-source corporate filings extraction | T-029 | ADR-022 |
-| **Control Plane** | Telegram Bot with 1-tap HITL approvals & conversational chat agent | Hybrid: Telegram operational bot + React visual analytics dashboard | T-034, T-036 | ADR-025, ADR-026 |
-| **Market Data Resilience** | yfinance with per-symbol isolation & tenacity retry | Incremental PostgreSQL OHLCV daily candle cache | T-035 | ADR-026 |
-| **Data Contracts** | Typed Pydantic models in `app/models.py` | Strict runtime schema enforcement | T-027 | ADR-003 |
-| **Credentials** | Pydantic `SecretStr` preventing secret leaks | Vault / KMS cloud secret provider | T-027 | ADR-001 |
-| **Concurrency** | Bounded `ThreadPoolExecutor(max_workers=3)` + tenacity retries | Distributed task workers if scale requires | T-030 | ADR-019 |
-| **Evaluation** | NIFTY 100 Buy-and-Hold benchmark, Profit Factor, R-multiples, `/performance` | Monte Carlo drawdown simulations | T-007 | ADR-011 |
-| **Backtesting** | Event-driven walk-forward backtester reusing production pipeline | Interactive visual backtest analyzer in Web UI | T-031, T-036 | ADR-012, ADR-025 |
+| **Persistence** | Unified PostgreSQL 16 sidecar container | PostgreSQL 16 + dynamic schema migrations | T-026 | ADR-023 |
+| **Screener** | Multi-strategy simultaneous screening (Breakout, Pullback, Mean Reversion) | Multi-Timeframe (Daily + Weekly) Confluence | T-040 | ADR-030 |
+| **Sector Context** | Sourced macro regime (`^NSEI`, `^INDIAVIX`) | Sector Relative Strength (RS) ranking & rotation | T-039 | ADR-029 |
+| **Risk Engine** | Pure math ATR stops + 1% sizing | Dynamic ATR Trailing Stops & Break-Even Lock | T-038 | ADR-028 |
+| **Portfolio Gates** | Capital heat tracking + 15% cap | Deterministic Sector Concentration & Correlation Caps | T-041 | ADR-031 |
+| **Control Plane** | Full React Web Cockpit + Telegram Companion | Interactive Chart Overlays & Telegram Media Snapshots | T-037, T-042 | ADR-027, ADR-032 |
+| **Market Data** | Incremental PostgreSQL daily bar cache | Daily + Weekly Multi-Timeframe Bar Ingestion | T-035, T-040 | ADR-026, ADR-030 |
+| **Backtesting** | Event-driven walk-forward backtester | Monte Carlo Bootstrap Risk & Ruin Simulation | T-043 | ADR-033 |
+
 
 
 ## Target Research Architecture
@@ -289,6 +290,11 @@ sidecar container (ADR-023):
   never passed to an order-capable agent.
 - Broker GTT and live order methods remain fail-closed and are not exposed to
   research agents.
+- Market data is Groww-first with automatic Yahoo Finance fallback (ADR-036):
+  `app/market_data.py` prefers Groww historical candles when configured, and
+  `app/groww_client.py` exposes read-only live quote/LTP/OHLC and margin-estimate
+  methods; an informational (non-blocking) margin-affordability line is surfaced
+  on the Telegram trade proposal card via `graph._calculate_risk`.
 
 ## Related Documents
 

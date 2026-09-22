@@ -225,6 +225,21 @@ def get_universe(force_refresh: bool = False) -> list[str]:
     return _rows_to_symbols(_resolve_rows(force_refresh=force_refresh))
 
 
+def get_universe_constituents(force_refresh: bool = False) -> list[dict[str, str]]:
+    """Return structured constituent records for the NIFTY 100 universe."""
+    rows = _resolve_rows(force_refresh=force_refresh)
+    return [
+        {
+            "symbol": row[COL_SYMBOL].strip().upper(),
+            "company_name": row[COL_COMPANY].strip(),
+            "industry": row[COL_INDUSTRY].strip(),
+            "series": row.get(COL_SERIES, "").strip(),
+            "isin": row.get(COL_ISIN, "").strip(),
+        }
+        for row in rows
+    ]
+
+
 def get_universe_with_industries() -> dict[str, str]:
     """Return `{symbol: industry}` for the current universe (sector-risk / news-alias use)."""
     rows = _resolve_rows()
@@ -244,3 +259,37 @@ def diff_universe(old: list[str], new: list[str]) -> dict:
         "added": sorted(new_set - old_set),
         "removed": sorted(old_set - new_set),
     }
+
+
+def get_symbol_sector(symbol: str) -> str:
+    """Map a symbol to its standardized Sector category using constituent industry metadata."""
+    industries = get_universe_with_industries()
+    raw_ind = industries.get(symbol.strip().upper(), "").upper()
+
+    if "IT" in raw_ind or "SOFTWARE" in raw_ind or "TECH" in raw_ind:
+        return "IT"
+    if "BANK" in raw_ind:
+        return "BANKING"
+    if "FINANC" in raw_ind or "INSURANCE" in raw_ind or "INVESTMENT" in raw_ind:
+        return "FINANCIAL_SERVICES"
+    if "AUTO" in raw_ind or "VEHICLE" in raw_ind or "TYRE" in raw_ind:
+        return "AUTO"
+    if "PHARMA" in raw_ind or "HEALTHCARE" in raw_ind or "DRUG" in raw_ind or "BIOTECH" in raw_ind:
+        return "PHARMA"
+    if "METAL" in raw_ind or "STEEL" in raw_ind or "MINING" in raw_ind or "ALUMINIUM" in raw_ind or "COPPER" in raw_ind:
+        return "METALS"
+    if "OIL" in raw_ind or "GAS" in raw_ind or "PETROLEUM" in raw_ind or "POWER" in raw_ind or "ENERGY" in raw_ind or "REFINER" in raw_ind:
+        return "ENERGY"
+    if "FMCG" in raw_ind or "FOOD" in raw_ind or "BEVERAGE" in raw_ind or "TOBACCO" in raw_ind or "PERSONAL CARE" in raw_ind:
+        return "FMCG"
+    if "REALTY" in raw_ind or "ESTATE" in raw_ind or "HOUSING" in raw_ind:
+        return "REALTY"
+    if "CONSTRUCT" in raw_ind or "INFRA" in raw_ind or "CEMENT" in raw_ind or "CAPITAL GOODS" in raw_ind or "ENGINEERING" in raw_ind:
+        return "INFRA"
+    if "TELECOM" in raw_ind:
+        return "TELECOM"
+    if "CONSUMER" in raw_ind or "RETAIL" in raw_ind or "TEXTILE" in raw_ind or "APPAREL" in raw_ind:
+        return "CONSUMER_DURABLES"
+
+    return "OTHER" if raw_ind else "UNKNOWN"
+

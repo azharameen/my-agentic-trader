@@ -39,3 +39,5 @@ screener filters, risk engines, and execution layers for TrAId.
 8. **Deterministic Hashing:**
    - Cache keys and snapshot IDs must be generated via `app.evidence.content_hash()`.
      Never use Python's built-in `str(dict)` for cache keys.
+9. **Mandatory Post-Implementation Container Build:**
+   - Whenever backend or frontend implementation tasks are completed and all tests pass (100%), always build the frontend production assets (`cd frontend && npm run build`) and update the Docker containers (`docker compose build` / `docker compose up --build -d`) so that the latest live application is immediately running and verifiable.

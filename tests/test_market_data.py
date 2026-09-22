@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+
 import pandas as pd
 import pytest
 
@@ -153,3 +154,80 @@ def test_load_history_falls_back_to_cache_on_delta_failure(monkeypatch):
 
     assert result.source == "postgresql_cache"
     assert len(result.frame) == 60
+
+
+# --------------------------------------------------------------------------- #
+# ADR-036: Groww-first historical data provider with automatic yfinance fallback
+# --------------------------------------------------------------------------- #
+def test_download_raw_groww_returns_none_when_not_configured(monkeypatch):
+    """Groww-first dispatcher must fall straight to yfinance when Groww isn't configured (default test env)."""
+    frame = pd.DataFrame({column: [100.0] for column in market_data.REQUIRED_COLUMNS})
+    calls = []
+
+    def fake_yfinance(sym, period):
+        calls.append((sym, period))
+        return frame
+
+    monkeypatch.setattr(market_data, "_download_raw_yfinance", fake_yfinance)
+
+    result_frame, source = market_data._download_raw("RELIANCE", "RELIANCE.NS", "1y")
+
+    assert source == "yfinance"
+    assert result_frame.equals(frame)
+    assert calls == [("RELIANCE.NS", "1y")]
+
+
+def test_download_raw_prefers_groww_when_configured(monkeypatch):
+    """When Groww is configured and returns candles, it takes priority over yfinance."""
+    monkeypatch.setenv("GROWW_ENABLED", "true")
+    monkeypatch.setenv("GROWW_ACCESS_TOKEN", "valid_token")
+    monkeypatch.setenv("GROWW_MARKET_DATA_ENABLED", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    groww_frame = pd.DataFrame(
+        {column: [111.0] for column in market_data.REQUIRED_COLUMNS},
+        index=[pd.to_datetime("2026-01-01")],
+    )
+    monkeypatch.setattr(market_data, "_download_raw_groww", lambda sym, period: groww_frame)
+
+    def fail_yfinance(*args, **kwargs):
+        raise AssertionError("yfinance should not be called when Groww succeeds")
+
+    monkeypatch.setattr(market_data, "_download_raw_yfinance", fail_yfinance)
+
+    frame, source = market_data._download_raw("RELIANCE", "RELIANCE.NS", "1y")
+
+    assert source == "groww_historical"
+    assert frame.equals(groww_frame)
+    get_settings.cache_clear()
+
+
+def test_download_raw_falls_back_to_yfinance_when_groww_errors(monkeypatch):
+    monkeypatch.setenv("GROWW_ENABLED", "true")
+    monkeypatch.setenv("GROWW_ACCESS_TOKEN", "valid_token")
+    monkeypatch.setenv("GROWW_MARKET_DATA_ENABLED", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    def fake_groww_raises(sym, period):
+        raise RuntimeError("rate limited")
+
+    frame = pd.DataFrame({column: [100.0] for column in market_data.REQUIRED_COLUMNS})
+    monkeypatch.setattr(market_data, "_download_raw_groww", fake_groww_raises)
+    monkeypatch.setattr(market_data, "_download_raw_yfinance", lambda sym, period: frame)
+
+    result_frame, source = market_data._download_raw("RELIANCE", "RELIANCE.NS", "1y")
+
+    assert source == "yfinance"
+    assert result_frame.equals(frame)
+    get_settings.cache_clear()
+
+
+def test_period_to_days_parses_common_suffixes():
+    assert market_data._period_to_days("5d") == 5
+    assert market_data._period_to_days("6mo") == 186
+    assert market_data._period_to_days("1y") == 366
+    assert market_data._period_to_days("bogus") == 365

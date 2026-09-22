@@ -67,6 +67,129 @@ def calculate_delivery_costs(buy_value: float, sell_value: float) -> DeliveryCos
     )
 
 
+def calculate_trailing_stop(
+    entry_price: float,
+    hard_stop: float,
+    highest_price: float,
+    current_price: float,
+    atr: float,
+    previous_trailing_stop: Optional[float] = None,
+) -> tuple[float, str]:
+    """Calculate dynamic ATR-based trailing stop and break-even stop (ADR-028).
+
+    Parameters
+    ----------
+    entry_price:
+        Original trade entry price.
+    hard_stop:
+        Initial baseline protective stop loss.
+    highest_price:
+        Highest price reached by the asset since trade entry.
+    current_price:
+        Latest daily close or live market price.
+    atr:
+        Current 14-period Average True Range.
+    previous_trailing_stop:
+        Previously recorded trailing stop level.
+
+    Returns
+    -------
+    tuple[float, str]
+        (new_trailing_stop, stop_mode) where stop_mode is 'ATR_TRAILING',
+        'BREAK_EVEN', or 'INITIAL'.
+    """
+    initial_risk = entry_price - hard_stop
+    if initial_risk <= 0:
+        return hard_stop, "INITIAL"
+
+    # Monotonic baseline: stop never ratchets below previous stop or hard stop
+    base_stop = max(previous_trailing_stop or hard_stop, hard_stop)
+    target_stop = base_stop
+    mode = "INITIAL"
+
+    # 1. Chandelier / ATR Trailing Gate (+2.0R expansion)
+    if highest_price >= entry_price + (2.0 * initial_risk):
+        atr_stop = highest_price - (1.5 * atr)
+        # Ensure trailing stop is at least at breakeven
+        target_stop = max(base_stop, entry_price, atr_stop)
+        mode = "ATR_TRAILING"
+    # 2. Break-Even Gate (+1.5R expansion)
+    elif highest_price >= entry_price + (1.5 * initial_risk):
+        target_stop = max(base_stop, entry_price)
+        mode = "BREAK_EVEN"
+
+    # Cap stop below current price so we don't calculate a stop higher than current price
+    new_stop = min(target_stop, current_price)
+    new_stop = max(new_stop, base_stop)
+
+    return round(new_stop, 2), mode
+
+
+def evaluate_sector_exposure_gate(
+    symbol: str,
+    sector: Optional[str],
+    open_trades: list[dict],
+    portfolio_capital: float,
+    max_sector_capital_pct: float = 0.25,
+    max_sector_positions: int = 2,
+) -> Optional[str]:
+    """Evaluate deterministic sector concentration and correlation risk gates (ADR-031).
+
+    Parameters
+    ----------
+    symbol:
+        Candidate symbol under review.
+    sector:
+        Industry or sector classification (e.g. 'IT', 'BANKING', 'AUTO').
+    open_trades:
+        List of active OPEN_PAPER trade dictionaries.
+    portfolio_capital:
+        Total current equity in INR.
+    max_sector_capital_pct:
+        Maximum fraction of total capital allowable in one sector (default 25%).
+    max_sector_positions:
+        Maximum concurrent open positions allowable in one sector (default 2).
+
+    Returns
+    -------
+    Optional[str]
+        None if gate passes, or a descriptive rejection reason code.
+    """
+    if not sector or sector.upper() == "UNKNOWN":
+        return None
+
+    sector_clean = sector.strip().upper()
+    sector_positions = 0
+    sector_capital_allocated = 0.0
+
+    for t in open_trades:
+        t_sector = (t.get("sector") or t.get("industry") or "").strip().upper()
+        if t_sector == sector_clean and t["status"] == "OPEN_PAPER":
+            sector_positions += 1
+            entry = float(t.get("fill_price") or t.get("entry_price") or 0.0)
+            qty = int(t.get("quantity") or 0)
+            sector_capital_allocated += (entry * qty)
+
+    # 1. Maximum Concurrent Positions Gate
+    if sector_positions >= max_sector_positions:
+        logger.warning(
+            "Rejecting %s: sector %s already has %d active open positions (max=%d).",
+            symbol, sector_clean, sector_positions, max_sector_positions,
+        )
+        return "SECTOR_MAX_POSITIONS_EXCEEDED"
+
+    # 2. Maximum Capital Exposure Gate
+    max_capital = portfolio_capital * max_sector_capital_pct
+    if sector_capital_allocated >= max_capital:
+        logger.warning(
+            "Rejecting %s: sector %s capital allocated (₹%.2f) exceeds max allowed (₹%.2f, %.0f%%).",
+            symbol, sector_clean, sector_capital_allocated, max_capital, max_sector_capital_pct * 100,
+        )
+        return "SECTOR_CAPITAL_EXPOSURE_EXCEEDED"
+
+    return None
+
+
 def calculate_risk(
     symbol: str,
     entry_price: float,

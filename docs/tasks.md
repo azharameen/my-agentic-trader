@@ -20,7 +20,13 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - **Phase 4: Evaluation & Performance Operations (Completed):** T-007 (NIFTY 100 Buy-and-Hold benchmark comparator, 30-trade minimum sample size).
 - **Phase 5: LangGraph Platform Modernization (Completed):** T-023 (store, durability, time travel), T-024 (agent middleware), T-025 (LangSmith tracing).
 - **Phase 6: Multi-Strategy, Multi-Agent & PostgreSQL Evolution (Completed):** T-026 (PostgreSQL sidecar & migration), T-027 (type safety & SecretStr), T-028 (multi-strategy screening), T-030 (concurrency hardening), T-031 (walk-forward backtester), T-033 (documentation consolidation).
-- **Phase 7: Telegram Usability & Visual Analytics (Active):** T-034 (Telegram usability suite), T-035 (incremental OHLCV caching), T-036 (React visual analytics web dashboard).
+- **Phase 7: Telegram Usability & Visual Analytics (Completed):** T-034 (Telegram usability suite), T-035 (incremental OHLCV caching), T-036 (React visual analytics web dashboard).
+- **Phase 8: Complete Interactive Web Application (Completed):** T-037 (Full-featured React + TypeScript Cockpit, HITL Approvals, Streaming Copilot, SSE Event Bus, Multi-Container Docker).
+- **Phase 9: Systematic Alpha & Advanced Risk Evolution (Active Roadmap):** T-038 (dynamic ATR trailing stops), T-039 (sector rotation & RS ranking), T-040 (multi-timeframe confluence), T-041 (sector concentration risk gates), T-042 (chart annotations & Telegram visual snapshots), T-043 (Monte Carlo bootstrap simulator).
+- **Phase 10: Beginner Wealth Copilot & Enhanced User Journey (Completed):** T-044 (affordability bands, GTT helper, 2-tranche compounding, peace-of-mind score, zen briefing).
+- **Phase 11: Read-Only Groww Portfolio & Margin Synchronization (Completed):** T-045 (TOTP auth, holdings/margin read-only sync).
+- **Phase 12: Zero-Touch Demat & Groww Portfolio Hub (Completed):** T-046 (auto-sync, mutual fund folios, AI portfolio doctor, net worth ribbon).
+- **Phase 13: Groww-First Read-Only Market Data & Margin Visibility (Completed):** T-047 (Groww-first historical/live data with yfinance fallback, informational margin-affordability warning on proposals, instrument master, test-isolation hardening, ADR-036).
 
 ---
 
@@ -28,9 +34,19 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
+| **T-047** | `done` | High | ADR-036 | Groww-First Read-Only Market Data, Margin & Instrument Master Extension |
+| **T-046** | `done` | High | ADR-035 | Phase 12: Zero-Touch Demat & Groww Portfolio Hub (Auto-Sync, Mutual Funds Folios, AI Doctor Reviews, Net Worth Ribbon) |
+| **T-045** | `done` | High | ADR-035 | Phase 11: Read-Only Groww Portfolio & Margin Synchronization |
+| **T-044** | `done` | High | ADR-034 | Phase 10: Beginner Wealth Copilot & Enhanced User Journey (Affordability Bands, GTT Helper, 2-Tranche Exits, Peace of Mind Score, Zen Briefing) |
+| **T-039** | `done` | High | ADR-029 | Sector Relative Strength (RS) Ranking & Rotation Engine |
+| **T-040** | `done` | High | ADR-030 | Multi-Timeframe (MTF) Daily + Weekly Trend Confluence Screener |
+| **T-041** | `done` | High | ADR-031 | Deterministic Sector Concentration & Correlation Risk Gates |
+| **T-042** | `done` | Medium | ADR-032 | Visual Chart Level Overlays & Telegram Candlestick Media Rendering |
+| **T-043** | `done` | Medium | ADR-033 | Monte Carlo Bootstrap Risk Simulation Engine for Backtesting |
+| **T-037** | `done` | High | ADR-027 | Phase 8: Complete Interactive Web Application Cockpit (React + TypeScript + Vite + FastAPI + SSE Event Bus + Docker) |
+| **T-036** | `done` | Medium | ADR-025 | Phase 7: React Visual Analytics Web Dashboard (FastAPI + Lightweight Charts + Equity Curve + Backtester) |
 | **T-035** | `done` | High | ADR-026 | Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb errors |
 | **T-034** | `done` | High | ADR-026 | Telegram Usability Suite: `[🔬 Agent Debate]` button, `/positions` command, Daily Scan Digest |
-| **T-036** | `backlog` | Medium | ADR-025 | Phase 7: Optional React Visual Analytics Web Dashboard (FastAPI + React + Lightweight Charts) |
 | **T-033** | `done` | High | ADR-001 | Canonical documentation synchronicity, baseline consolidation, and ADR updates |
 
 | **T-004** | `done` | High | ADR-011 | Market regime macro gates (`^NSEI`, `^INDIAVIX`) with accepted numeric thresholds |
@@ -61,23 +77,18 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active implementation tasks. Ready to begin T-034.)*
+*(Currently 0 active implementation tasks. Ready for Gate 2 transition upon operator approval.)*
 
 ---
 
 ## 4. Tasks Ready for Implementation (`todo`)
-
-*(Currently 0 tasks in todo. Ready to begin Phase 7 T-036 planning.)*
+*(All Phase 9 systematic alpha and risk tasks implemented and verified. Ready for next phase roadmap.)*
 
 ---
 
 ## 5. Backlog Tasks (`backlog`)
 
-### T-036 Phase 7: Visual Analytics React Web Dashboard
-- Status: `backlog`
-- Priority: `Medium`
-- Related ADRs: [ADR-025](architecture-decisions.md#adr-025-hybrid-control-plane-telegram-primary--phase-7-react-analytics)
-- Description: Read-only visual web dashboard (FastAPI backend + React / Vite / Tailwind / Lightweight Charts) querying PostgreSQL `trade_audit_log`, `research_cache`, and backtest runs.
+*(All current milestone tasks completed or deferred. Ready for future roadmap backlog scoping.)*
 
 ---
 
@@ -92,11 +103,97 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 7. Tasks Under Review (`inreview`)
 
-*(Currently 0 tasks in review. T-023 and T-024 completed.)*
+*(Currently 0 tasks in review.)*
 
 ---
 
 ## 8. Completed Tasks (`done`)
+
+### T-038 Dynamic ATR Trailing Stops & Break-Even Profit Protection Engine
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-028](architecture-decisions.md#adr-028-dynamic-atr-trailing-stops-and-break-even-profit-protection)
+- Completed Milestones:
+  - [x] Implemented deterministic `calculate_trailing_stop()` in `app/risk.py` with multi-stage ratcheting (break-even lock at $+1.5R$, dynamic $1.5 \times ATR$ Chandelier trailing stop at $+2.0R$).
+  - [x] Extended PostgreSQL `trade_audit_log` schema with `highest_price` and `trailing_stop` columns in `app/db.py`.
+  - [x] Integrated trailing stop updates into daily position monitor (`app/monitor.py`) and order executor (`app/executor.py`).
+  - [x] Added trailing stop exit logic to walk-forward backtester (`app/backtester.py`) for realistic zero-lookahead simulations.
+  - [x] Added unit tests in `tests/test_risk.py` and `tests/test_backtester.py` with 100% test pass rate.
+
+### T-039 Sector Relative Strength (RS) Ranking & Rotation Engine
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-029](architecture-decisions.md#adr-029-sector-relative-strength-rs-ranking-and-sector-rotation-context)
+- Completed Milestones:
+  - [x] Ingested daily historical OHLCV data for 9 NSE Sectoral Indices (`^CNXIT`, `^CNXAUTO`, `^NSEBANK`, `^CNXFMCG`, etc.) in `app/market_data.py`.
+  - [x] Implemented 20-day Mansfield Relative Strength computation vs `^NSEI` benchmark in `app/screener.py`.
+  - [x] Mapped NIFTY 100 universe symbols to Sectoral Classifications via `get_symbol_sector()` in `app/universe.py`.
+  - [x] Injected Sector Name and Sector RS Score into `TechnicalSnapshot` (`app/models.py`) and agent debate context.
+  - [x] Added unit tests in `tests/test_risk.py` and `tests/test_screener.py` with 100% test pass rate.
+
+### T-040 Multi-Timeframe (MTF) Daily + Weekly Trend Confluence Screener
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-030](architecture-decisions.md#adr-030-multi-timeframe-mtf-daily-weekly-trend-confluence-screening)
+- Completed Milestones:
+  - [x] Built weekly bar resampler (`resample_to_weekly`) in `app/market_data.py` aggregating OHLCV to Weekly frequency with Friday close.
+  - [x] Computed Weekly 30-EMA (`weekly_ema_30`) and Weekly 14-RSI (`weekly_rsi_14`) forward-filled onto daily series in `app/screener.py`.
+  - [x] Enforced MTF confluence gates across `BreakoutMomentumStrategy` (Weekly 30-EMA & Weekly RSI $\ge 50$) and `PullbackInUptrendStrategy` (Weekly 30-EMA & Weekly RSI $\ge 45$) in `app/strategies.py`.
+  - [x] Added unit tests in `tests/test_strategies.py` verifying MTF qualification and fallback behaviors.
+
+### T-041 Deterministic Sector Concentration & Correlation Risk Gates
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-031](architecture-decisions.md#adr-031-deterministic-sector-concentration-and-correlation-risk-gates)
+- Completed Milestones:
+  - [x] Built deterministic `evaluate_sector_exposure_gate()` in `app/risk.py`.
+  - [x] Enforced max 25% portfolio capital exposure per sector and max 2 concurrent open positions per sector.
+  - [x] Integrated sector risk gate into LangGraph execution flow in `app/graph.py` (`_calculate_risk`).
+  - [x] Added comprehensive unit tests in `tests/test_risk.py` verifying single-trade and accumulated exposure rejections.
+
+### T-042 Visual Chart Level Overlays & Web API Integration
+- Status: `done`
+- Priority: `Medium`
+- Related ADRs: [ADR-032](architecture-decisions.md#adr-032-visual-chart-level-overlays--telegram-candlestick-media-rendering)
+- Completed Milestones:
+  - [x] Implemented `/api/levels/{symbol}` endpoint in `app/dashboard_api.py` serving active Entry, Target, Soft/Hard Stop, and Trailing Stop price levels.
+  - [x] Integrated dynamic horizontal price lines with custom color badges in `frontend/src/components/Charts/CandlestickChart.tsx` using TradingView Lightweight Charts API.
+  - [x] Added API client bindings (`fetchSymbolLevels`) and TypeScript interfaces in `frontend/src/lib/api.ts` and `frontend/src/types/api.ts`.
+  - [x] Added automated endpoint tests in `tests/test_dashboard_api.py` with 100% pass rate.
+
+### T-043 Monte Carlo Bootstrap Risk Simulation Engine for Backtesting
+- Status: `done`
+- Priority: `Medium`
+- Related ADRs: [ADR-033](architecture-decisions.md#adr-033-monte-carlo-bootstrap-risk-simulation-engine-for-backtesting)
+- Completed Milestones:
+  - [x] Implemented vectorized `run_monte_carlo_simulation()` in `app/backtester.py` performing 1,000 i.i.d. trade order resamplings with replacement.
+  - [x] Computed 95th/99th percentile Max Drawdown, Probability of Ruin ($\ge 50\%$ drawdown), 5th/95th percentile Final Equity range, and 10-bucket drawdown distribution histogram.
+  - [x] Integrated Monte Carlo simulation results into `/api/backtest` endpoint payload in `app/dashboard_api.py`.
+  - [x] Built Monte Carlo Bootstrap Risk visualization card with distribution histogram in `frontend/src/components/Backtest/BacktestStudio.tsx`.
+  - [x] Added unit tests in `tests/test_backtester.py` with 100% test pass rate.
+
+### T-037 Phase 8: Complete Interactive Web Application Cockpit (React + Vite + FastAPI + SSE)
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-027](architecture-decisions.md#adr-027-complete-interactive-web-application-as-primary-control-cockpit)
+- Completed Milestones:
+  - [x] Built modern React + TypeScript + Vite + Tailwind CSS + Lucide Icons SPA in `frontend/` featuring 6 comprehensive views: Command Cockpit, AI Research Copilot, Candlestick Explorer, Audit & Alpha Benchmark, Backtest Studio, and System Health.
+  - [x] Implemented Human-in-the-Loop proposal approval workflow with atomic PostgreSQL status transitions and modal `[🔬 Agent Debate]` drawer displaying Bear Critic objections vs Bull Analyst thesis.
+  - [x] Built real-time Server-Sent Events (SSE) bus in `app/events.py` for live universe scan progress updates, proposal generation alerts, and position tracking.
+  - [x] Created streaming AI Copilot endpoint (`/api/chat/stream`) with token-by-token generation and collapsible tool trace inspection.
+  - [x] Added multi-container Docker Compose configuration (`docker-compose.yml`, `frontend/Dockerfile`, `frontend/nginx.conf`) orchestrating `postgres`, `trading-engine`, `dashboard`, and `frontend`.
+  - [x] Added comprehensive automated tests in `tests/test_dashboard_api.py` with 100% test pass rate across all modules.
+
+### T-036 Phase 7: Visual Analytics Web Dashboard (FastAPI + Lightweight Charts)
+- Status: `done`
+- Priority: `Medium`
+- Related ADRs: [ADR-025](architecture-decisions.md#adr-025-hybrid-control-plane-telegram-primary--phase-7-react-analytics)
+- Completed Milestones:
+  - [x] Implemented read-only FastAPI analytics backend in `app/dashboard_api.py` with REST endpoints (`/api/overview`, `/api/positions`, `/api/trades`, `/api/performance`, `/api/candles/{symbol}`, `/api/backtest`)
+  - [x] Built responsive dark-mode Single Page Application (SPA) in `app/static/index.html` featuring Tailwind CSS, TradingView Lightweight Charts (candlestick + volume), Chart.js equity curve visualization, and interactive walk-forward backtester
+  - [x] Added `dashboard` sub-command in `app/main.py` (`python -m app.main dashboard [--host] [--port]`)
+  - [x] Added `fastapi` and `uvicorn` dependencies to `requirements.txt`
+  - [x] Created `tests/test_dashboard_api.py` with 100% test pass rate verifying all endpoints and read-only invariants
 
 ### T-035 Incremental PostgreSQL OHLCV Caching & Market Data Resilience
 - Status: `done`
@@ -250,9 +347,99 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - Status: `done`
 - Completed: TTL-governed cache for technical snapshots, RSS headlines, catalyst classifications, and immutable evidence snapshots with cache-hit attribution.
 
-### T-025 Optional LangSmith Tracing
+### T-047 Groww-First Read-Only Market Data, Margin & Instrument Master Extension
 - Status: `done`
-- Completed: Opt-in LangSmith tracing implemented via `app.observability` (ADR-021), fails closed without API key, tags non-secret metadata.
+- Priority: `High`
+- Related ADRs: [ADR-036](architecture-decisions.md#adr-036-groww-first-read-only-market-data-margin--instrument-master-extension)
+- Completed Milestones:
+  - **ST-047.1: Configuration**
+    - [x] Added `GROWW_MARKET_DATA_ENABLED` (default `True`) to `config/settings.py` and `.env.example`.
+  - **ST-047.2: Read-Only Live Data, Margin & Instrument Client Methods**
+    - [x] Added `get_available_margin_details`, `get_order_margin_details`, `get_quote`, `get_ltp` (batched ≤50), `get_ohlc`, `get_historical_candle_data`, `get_all_instruments`, `get_instrument_by_groww_symbol` to `app/groww_client.py`, all fail-closed on error.
+    - [x] Kept `get_user_margin` REST-only (unchanged) to avoid double-sourcing the same balance from two schemas.
+  - **ST-047.3: Groww-First Market Data Provider**
+    - [x] Added `_download_raw_groww` + `_download_raw` dispatcher in `app/market_data.py`; Groww-first, automatic Yahoo Finance fallback on any error/unconfigured state; new `"groww_historical"` provenance value on `MarketDataResult`.
+  - **ST-047.4: Informational Margin Check on Trade Proposals**
+    - [x] Added optional `margin_required`/`margin_available` fields to `TradeProposal`/`ProposalCard` (`app/state.py`).
+    - [x] Populated via `get_order_margin_details`/`get_user_margin` in `graph._calculate_risk`, non-blocking (try/except, never rejects a proposal).
+    - [x] Persisted new nullable columns on `pending_proposals` (`app/proposals.py`).
+    - [x] Surfaced a small ⚠️ warning line on the Telegram proposal card when margin required exceeds available balance (`app/telegram_bot.py`), informational only.
+  - **ST-047.5: Test Isolation Hardening**
+    - [x] `tests/conftest.py` now forces `GROWW_ENABLED=false` / `GROWW_MARKET_DATA_ENABLED=false` by default to prevent a developer's real `.env` Groww credentials from causing live network calls during `pytest`.
+  - **ST-047.6: Conversational Live Quote Tool**
+    - [x] Added `get_groww_quote(symbol)` read-only tool to `app/chat_agent.py` (LTP, day change, day range, OHLC, 52-week range) and wired it into the agent tool list + system prompt, so the operator can ask "what's RELIANCE at right now".
+  - **ST-047.6: Verification & Documentation Sync**
+    - [x] Added/extended unit tests: `tests/test_groww_client.py` (new SDK-backed methods, batching, fail-closed), `tests/test_market_data.py` (Groww-first dispatcher + fallback).
+    - [x] `pytest -q` passing on all touched modules.
+    - [x] `docs/architecture.md`, `docs/reference.md`, `docs/prd.md`, `docs/architecture-decisions.md` synchronized.
+  - **Deferred (tracked, not blocking):** Wiring `get_all_instruments`/tick-size into `risk.py` position-sizing rounding — no evidence yet of a real tick-size sizing defect (YAGNI); revisit if a fractional-tick instrument surfaces in production.
+
+### T-046 Phase 12: Zero-Touch Demat & Groww Portfolio Hub
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-035](architecture-decisions.md#adr-035-read-only-groww-api-integration-for-portfolio--margin-synchronization)
+- Completed Milestones:
+  - **ST-046.1: Zero-Touch Background Synchronization**
+    - [x] Implemented `auto_sync_if_configured()` in `app/groww_client.py` for background sync on boot and API access.
+    - [x] Configured 15-minute periodic interval job in `app/main.py` apscheduler (`_scheduled_groww_sync`).
+  - **ST-046.2: Multi-Asset Class Persistence & Overview Calculation**
+    - [x] Added `user_mutual_funds` table and indices in `app/db.py`.
+    - [x] Implemented `get_portfolio_overview()` calculating combined Net Worth, Equity value, Mutual Fund folios, Cash & Margin.
+  - **ST-046.3: AI Portfolio Doctor Engine**
+    - [x] Implemented `evaluate_portfolio_ai_doctor(user_id)` in `app/portfolio_manager.py` rating positions as `TAKE_PROFIT_TRANCHE_1`, `HEALTHY_SWING`, `DEFENSE_ALERT`, or `RISK_FREE_RUNNER`.
+    - [x] Exposed `POST /api/v1/portfolio/ai-doctor`, `GET /api/v1/groww/portfolio-overview`, and `GET /api/v1/groww/mutual-funds` in `app/dashboard_api.py`.
+  - **ST-046.4: Dedicated Frontend Demat & Groww Hub**
+    - [x] Created `frontend/src/components/Portfolio/DematPortfolioHub.tsx` with Net Worth Ribbon, Demat Equities table, Mutual Funds cards, and AI Doctor review drawer.
+    - [x] Added `Demat & Groww Hub` navigation tab to sidebar (`frontend/src/components/Layout/Sidebar.tsx` and `frontend/src/App.tsx`).
+  - **ST-046.5: Verification & Production Container Build**
+    - [x] Passed 100% of unit tests (`pytest -q`).
+    - [x] Production bundle built (`npm run build`) and Docker containers live (`docker compose up -d --build`).
+
+### T-044 Phase 10: Beginner Wealth Copilot & Enhanced User Journey
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-034](architecture-decisions.md#adr-034-beginner-wealth-copilot-affordability-bands-gtt-helper-and-2-tranche-compounding)
+- Completed Milestones:
+  - **ST-044.1: Goal Presets & Affordability Price-Banding**
+    - [x] Add `InvestmentGoal` enum and goal-adaptive parameter scaling in `app/models_basket.py`
+    - [x] Implement price-band affordability filtering for whole shares ($< ₹1,500$ for sub-₹30K budgets)
+    - [x] Implement Peace of Mind score ($0-100$) and visual Scenario Analysis (Best, Normal, Worst-Case)
+  - **ST-044.2: GTT Order Guidance & Slippage Traffic Lights**
+    - [x] Generate exact copyable GTT Stop-Loss and Target parameters for Zerodha/Groww in `app/basket_generator.py`
+    - [x] Implement traffic light slippage rating (🟢 Green, 🟡 Amber, 🔴 Red) in execution models
+  - **ST-044.3: 2-Tranche Target Compounding & Trailing Stops**
+    - [x] Implement Target 1 (50% exit) and Target 2 (50% runner) in `app/models_basket.py` & `app/portfolio_manager.py`
+    - [x] Implement dynamic Break-Even trailing stop ratcheting when price gains $\ge +4\%$
+    - [x] Implement True Net P&L calculation with STT friction and STCG tax (20%)
+  - **ST-044.4: Daily Zen Briefings & React Frontend Enhancements**
+    - [x] Enhance `app/digest_generator.py` with Zen mode status and 48h pre-earnings warnings
+    - [x] Upgrade `frontend/src/components/Beginner/BeginnerInvestWizard.tsx` with Goal selector, Peace of Mind score, GTT helper card, 2-tranche progress bars, and Net P&L transparency
+  - **ST-044.5: Verification & Container Packaging**
+    - [x] Comprehensive unit tests in `tests/test_basket_generator.py`, `tests/test_portfolio_manager.py`, `tests/test_digest_generator.py`, `tests/test_beginner_api_routes.py` with 100% test pass rate
+    - [x] Frontend production build `npm run build`
+    - [x] Docker container build `docker compose build` & `docker compose up -d`
+
+### T-045 Phase 11: Read-Only Groww Portfolio & Margin Synchronization
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-035](architecture-decisions.md#adr-035-read-only-groww-api-integration-for-portfolio--margin-synchronization)
+- Completed Milestones:
+  - **ST-045.1: Configuration, Settings & Secrets**
+    - [x] Add `growwapi` and `pyotp` dependencies to `requirements.txt`
+    - [x] Add `GROWW_ENABLED`, `GROWW_API_KEY`, `GROWW_API_SECRET`, `GROWW_ACCESS_TOKEN` to `config/settings.py` and `.env.example`
+  - **ST-045.2: Read-Only Client Engine & Invariant Enforcement**
+    - [x] Implement `app/groww_client.py` with TOTP / access token authentication and caching
+    - [x] Implement `get_user_margin()`, `get_holdings()`, `get_positions()`, and `get_orders()`
+    - [x] Enforce ADR-002 fail-closed order guard (explicit `RuntimeError` on order creation/modification)
+  - **ST-045.3: REST Endpoints & Chat Copilot Tooling**
+    - [x] Add `/api/v1/groww/status`, `/api/v1/groww/balance`, `/api/v1/groww/holdings`, `/api/v1/groww/sync` to `app/dashboard_api.py`
+    - [x] Register `get_groww_account_summary` in `app/chat_agent.py` for conversational queries
+  - **ST-045.4: Frontend UI Integrations**
+    - [x] Add API types and fetchers in `frontend/src/types/api.ts` and `frontend/src/lib/api.ts`
+    - [x] Add Groww connection indicator, auto-fill budget button, and Demat holdings import in `BeginnerInvestWizard.tsx`
+  - **ST-045.5: Verification & Container Build**
+    - [x] Comprehensive tests in `tests/test_groww_client.py` and `tests/test_groww_api_routes.py` with 100% test pass rate
+    - [x] Build frontend bundle (`npm run build`) and Docker containers (`docker compose build` / `up -d`)
 
 ---
 
@@ -261,7 +448,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - **T-002 Source and Data Inventory:** Deferred pending approved official source access terms.
 - **T-003 Corporate Research Inputs:** Deferred pending approved NSE/BSE filing endpoints.
 - **T-005 Full Multi-Agent Citation Graph:** Superseded by T-029 sequential multi-agent research subgraph.
-- **T-006 Read-Only Groww Context:** Deferred pending verified read-only API credentials.
+- **T-006 Read-Only Groww Context:** Promoted and implemented in T-045 (ADR-035).
 - **T-008 Future Execution Review:** Deferred (live order routing prohibited by ADR-002).
 - **T-010 Agentic Trader Modernization:** Modularized and superseded by Phase 6 tasks.
 - **T-016 Investor Preferences And Universe Selection:** Deferred (NIFTY 100 universe retained per ADR-015).

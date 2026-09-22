@@ -130,12 +130,36 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         print("\n" + report.encode("ascii", "replace").decode("ascii") + "\n")
 
 
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    """Launch the Phase 7 Visual Analytics Web Dashboard server."""
+    import uvicorn
+
+    host = getattr(args, "host", "127.0.0.1") or "127.0.0.1"
+    port = getattr(args, "port", 8000) or 8000
+    logger.info("Starting Visual Analytics Dashboard on http://%s:%d ...", host, port)
+    uvicorn.run("app.dashboard_api:app", host=host, port=port, log_level="info")
+
+
 def _scheduled_scan() -> None:
     """apscheduler job: run the daily universe scan."""
     try:
         pipeline.run_universe_scan(universe.get_universe())
     except Exception:  # noqa: BLE001 - a bad scheduled run must not kill the scheduler
         logger.exception("Scheduled scan failed.")
+
+
+
+def _scheduled_groww_sync() -> None:
+    """apscheduler job: periodic background synchronization of Groww Demat holdings."""
+    try:
+        from app.groww_client import get_groww_client
+
+        client = get_groww_client()
+        if client.is_configured():
+            res = client.auto_sync_if_configured()
+            logger.info("Scheduled Groww auto-sync completed: %s", res)
+    except Exception:  # noqa: BLE001
+        logger.exception("Scheduled Groww sync failed.")
 
 
 def _scheduled_universe_refresh() -> None:
@@ -157,7 +181,7 @@ def _scheduled_universe_refresh() -> None:
 
 
 def _start_scheduler() -> Any:
-    """Wire the daily EOD scan and the monthly universe refresh into apscheduler."""
+    """Wire the daily EOD scan, Groww auto-sync, and monthly universe refresh into apscheduler."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
     settings = get_settings()
@@ -168,12 +192,16 @@ def _start_scheduler() -> Any:
         day_of_week=settings.SCAN_CRON_DAYS, id="daily_scan",
     )
     scheduler.add_job(
+        _scheduled_groww_sync, "interval",
+        minutes=15, id="groww_demat_sync",
+    )
+    scheduler.add_job(
         _scheduled_universe_refresh, "cron",
         day=int(settings.UNIVERSE_REFRESH_DAY_OF_MONTH), hour=int(settings.UNIVERSE_REFRESH_HOUR),
         minute=int(settings.UNIVERSE_REFRESH_MINUTE), id="monthly_universe_refresh",
     )
     scheduler.start()
-    logger.info("Scheduler started: daily scan at %02d:%02d %s (%s), monthly universe refresh on day %s at %02d:%02d %s.",
+    logger.info("Scheduler started: daily scan at %02d:%02d %s (%s), Groww auto-sync every 15m, monthly universe refresh on day %s at %02d:%02d %s.",
                 settings.SCAN_CRON_HOUR, settings.SCAN_CRON_MINUTE,
                 settings.SCHEDULER_TIMEZONE, settings.SCAN_CRON_DAYS,
                 settings.UNIVERSE_REFRESH_DAY_OF_MONTH,
@@ -228,6 +256,9 @@ def build_parser() -> argparse.ArgumentParser:
     bt_p.add_argument("--start", required=True, help="Start date YYYY-MM-DD")
     bt_p.add_argument("--end", required=True, help="End date YYYY-MM-DD")
     bt_p.add_argument("--capital", type=float, default=None, help="Initial portfolio capital in INR")
+    dash_p = sub.add_parser("dashboard", help="Start the Visual Analytics Web Dashboard")
+    dash_p.add_argument("--host", default="127.0.0.1", help="Host to bind server (default: 127.0.0.1)")
+    dash_p.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     return parser
 
 
@@ -256,6 +287,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             cmd_run(args)
         elif args.command == "serve":
             cmd_serve(args)
+        elif args.command == "dashboard":
+            cmd_dashboard(args)
         elif args.command == "refresh-universe":
             cmd_refresh_universe(args)
         elif args.command == "check-databases":
@@ -269,6 +302,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "backtest":
             cmd_backtest(args)
         return 0
+
     finally:
         db.reset()
 

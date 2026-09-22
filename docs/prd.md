@@ -64,6 +64,9 @@ paper trades but must not buy or sell securities automatically.
 1. Authenticate to Groww only through a dedicated read-only adapter, if its
    supported API permits this.
 2. Import holdings, positions, order history, and account metadata.
+3. Groww is used as the preferred (fallback-to-Yahoo-Finance) source for
+   historical candles, live quotes/LTP/OHLC, and an informational margin
+   affordability check on trade proposals (ADR-036).
 3. Store fetched data with timestamp and source.
 4. Use it for exposure and context only; never submit orders.
 
@@ -128,14 +131,28 @@ ADR-022), domain model type safety and `SecretStr` credential masking (ADR-001,
 ADR-003), bounded thread pools and tenacity retry engine (ADR-019), and event-driven
 walk-forward backtesting framework (ADR-012).
 
-### Phase 7: Operational Usability Suite & Visual Web Dashboard (Active Roadmap)
+### Phase 7: Operational Usability Suite & Incremental OHLCV Cache (Completed)
 
 Telegram Usability Suite (`[🔬 Agent Debate]` on-demand breakdown, dedicated `/positions`
 command with portfolio capital heat tracking, automated 15:47 IST Daily Scan Digest,
-ADR-026), Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb
-rate-limit anomalies, and an optional read-only React Web Analytics Dashboard
-(FastAPI backend + React + Lightweight Charts) for interactive equity curves and
-backtest exploration (ADR-025). Live broker execution remains strictly excluded (ADR-002).
+ADR-026), and Incremental PostgreSQL OHLCV Caching to eliminate Yahoo Finance 401 Crumb
+rate-limit anomalies.
+
+### Phase 8: Complete Interactive Web Application Cockpit (Completed)
+
+Full-featured interactive React + TypeScript + Vite Cockpit (`frontend/` + FastAPI backend),
+Human-in-the-Loop trade proposal approvals, manual position exit controls, real-time Server-Sent
+Events (SSE) event bus, AI Research Copilot with token and tool trace streaming, interactive
+candlestick charts, and multi-container Docker Compose orchestration (ADR-027).
+
+### Phase 9: Systematic Alpha & Advanced Risk Engine Evolution (Active Roadmap)
+
+Dynamic ATR Trailing Stops and Break-Even Profit Protection (ADR-028, T-038), Sector Relative
+Strength (RS) Ranking and Sector Rotation Context (ADR-029, T-039), Multi-Timeframe (MTF) Daily + Weekly
+Trend Confluence Screening (ADR-030, T-040), Deterministic Sector Concentration & Correlation Risk Gates
+(ADR-031, T-041), Visual Chart Level Overlays & Telegram Candlestick Media Rendering (ADR-032, T-042),
+and Monte Carlo Bootstrap Risk Simulation Engine for Backtesting (ADR-033, T-043). Live broker execution
+remains strictly excluded (ADR-002).
 
 ## Success Metrics
 
@@ -201,3 +218,12 @@ Implementation must not begin for a task when its critical thresholds, source
 authority, identity rules, or persistence contract are undefined. Research-only
 source discovery may proceed, but scheduled ingestion requires a documented
 access method, terms review, fallback, freshness rule, and failure behavior.
+
+## Beginner Wealth Copilot & Guided Journey (ADR-034)
+
+- **Goal-Adaptive Planning:** Users specify investment capital (e.g. ₹10K to ₹5L) and life goals (`SAFE_GROWTH`, `VACATION_FUND`, `WEALTH_COMPOUNDING`, `LEARNING`).
+- **Affordability Banding:** Smart whole-share price filters for sub-₹30,000 budgets prioritizing high-liquidity stocks under ₹1,500.
+- **Explainability:** Peace of Mind Score ($0-100$), visual Best/Normal/Protected Downside scenario ranges, and plain-English "Why this stock" summaries.
+- **External Broker Guidance:** 1-Click GTT parameter generator (Stop-Loss and Target triggers) for Zerodha / Groww, with traffic light slippage checks.
+- **2-Tranche Compounding:** Target 1 (50% exit to lock in profit) + Target 2 (50% runner with breakeven trailing stop), true net P&L after friction and taxes, and automatic capital recycling.
+

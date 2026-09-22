@@ -62,6 +62,10 @@ You have tools to:
   symbol's most recent run (every node transition and why it stopped). Use
   this when the operator asks "why was X rejected/approved" instead of
   guessing.
+- get_groww_account_summary(): check Groww broker account status, available
+  cash/margin balance, and live Demat equity holdings.
+- get_groww_quote(symbol): real-time Groww market quote (LTP, day change, day
+  range, OHLC, 52-week range) for one NSE symbol. Read-only.
 
 Rules:
 1. You are READ/trigger-only. You can NEVER approve, reject, or kill a
@@ -133,17 +137,81 @@ def run_symbol(symbol: str) -> str:
 
 
 def get_symbol_history(symbol: str) -> str:
-    """Full step-by-step checkpoint history for a symbol's most recent run.
-
-    Read-only time-travel over LangGraph checkpoints: shows every node
-    transition, whether it paused for human approval, and the state at each
-    step, so the operator can ask "why did X get rejected/approved" without
-    re-running the pipeline.
-    """
+    """Full step-by-step checkpoint history for a symbol's most recent run."""
     history = graph.symbol_history(symbol.upper())
     if not history:
         return f"No pipeline run recorded for {symbol.upper()} yet."
     return json.dumps(history, indent=2, default=str)
+
+
+def get_groww_account_summary() -> str:
+    """Check Groww broker account status, available cash/margin balance, and live Demat holdings."""
+    from app import groww_client
+
+    client = groww_client.get_groww_client()
+    status = client.get_connection_status()
+    if not status.configured:
+        return "Groww API is not enabled or configured in settings."
+    if not status.authenticated:
+        return f"Groww API authentication failed: {status.message}"
+
+    bal = client.get_user_margin()
+    holdings = client.get_holdings()
+    return json.dumps(
+        {
+            "status": status.status,
+            "available_cash": bal.available_cash,
+            "total_margin": bal.total_margin,
+            "demat_holdings_count": len(holdings),
+            "holdings": [
+                {
+                    "symbol": h.symbol,
+                    "qty": h.quantity,
+                    "avg_price": h.avg_price,
+                    "pnl": h.pnl,
+                    "pnl_pct": f"{h.pnl_pct}%",
+                }
+                for h in holdings[:10]
+            ],
+        },
+        indent=2,
+    )
+
+
+def get_groww_quote(symbol: str) -> str:
+    """Fetch a real-time Groww market quote (LTP, day change, day range, OHLC) for one NSE symbol.
+
+    Read-only. Never places, modifies, or cancels an order.
+    """
+    from app import groww_client
+
+    client = groww_client.get_groww_client()
+    status = client.get_connection_status()
+    if not status.configured:
+        return "Groww API is not enabled or configured in settings."
+    if not status.authenticated:
+        return f"Groww API authentication failed: {status.message}"
+
+    clean = symbol.replace(".NS", "").replace(".NSE", "").strip().upper()
+    quote = client.get_quote(clean)
+    if not quote:
+        return f"No real-time quote available for {clean} from Groww (fall back to yfinance snapshot if needed)."
+
+    return json.dumps(
+        {
+            "symbol": clean,
+            "last_price": quote.get("last_price"),
+            "day_change": quote.get("day_change"),
+            "day_change_perc": quote.get("day_change_perc"),
+            "high": quote.get("high_trade_range"),
+            "low": quote.get("low_trade_range"),
+            "open": (quote.get("ohlc") or {}).get("open"),
+            "volume": quote.get("volume"),
+            "week_52_high": quote.get("week_52_high"),
+            "week_52_low": quote.get("week_52_low"),
+        },
+        indent=2,
+    )
 
 
 def _get_checkpointer() -> Any:
@@ -162,7 +230,15 @@ def _build_agent() -> Any:
     ]
     return create_agent(
         llm,
-        [get_symbol_snapshot, list_trades, get_thread_status, run_symbol, get_symbol_history],
+        [
+            get_symbol_snapshot,
+            list_trades,
+            get_thread_status,
+            run_symbol,
+            get_symbol_history,
+            get_groww_account_summary,
+            get_groww_quote,
+        ],
         system_prompt=_SYSTEM_PROMPT,
         checkpointer=_get_checkpointer(),
         store=store.get_store(),
@@ -174,6 +250,7 @@ _agent = None
 
 
 def _get_agent() -> Any:
+    """Lazily build (and cache) the agent."""
     """Lazily build (and cache) the agent."""
     global _agent
     if _agent is None:
@@ -200,3 +277,49 @@ def ask(question: str, thread_id: Optional[str] = None) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("Chat agent failed")
         return f"⚠️ Chat agent error: {exc}"
+
+
+def stream_ask(question: str, thread_id: Optional[str] = None):
+    """Yield streaming events (tokens, tool calls, status) for the conversational agent.
+
+    Yields dictionary payloads formatted for SSE consumption:
+    - {'type': 'status', 'content': '...'}
+    - {'type': 'tool_start', 'tool': '...', 'input': '...'}
+    - {'type': 'token', 'content': '...'}
+    - {'type': 'done', 'full_answer': '...'}
+    """
+    if not is_configured():
+        yield {"type": "error", "content": "⚠️ Configured LLM provider is unavailable."}
+        return
+
+    try:
+        agent = _get_agent()
+        config = {"configurable": {"thread_id": thread_id or "chat-agent-default"}}
+        full_tokens = []
+
+        for chunk in agent.stream({"messages": [("user", question)]}, config=config, stream_mode="messages"):
+            msg = chunk[0] if isinstance(chunk, tuple) else chunk
+            # Check for tool invocations
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    name = tc.get("name", "tool") if isinstance(tc, dict) else getattr(tc, "name", "tool")
+                    args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                    yield {"type": "tool_start", "tool": name, "input": str(args)}
+            elif hasattr(msg, "name") and getattr(msg, "name", None):
+                yield {"type": "tool_end", "tool": getattr(msg, "name"), "output": str(getattr(msg, "content", ""))[:200]}
+            elif hasattr(msg, "content") and msg.content:
+                text = msg.content if isinstance(msg.content, str) else str(msg.content)
+                if text:
+                    full_tokens.append(text)
+                    yield {"type": "token", "content": text}
+
+        yield {"type": "done", "full_answer": "".join(full_tokens)}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Stream ask failed, falling back to invoke")
+        # Fallback to standard ask if streaming encounters graph iterator difference
+        try:
+            ans = ask(question, thread_id=thread_id)
+            yield {"type": "token", "content": ans}
+            yield {"type": "done", "full_answer": ans}
+        except Exception as inner_exc:  # noqa: BLE001
+            yield {"type": "error", "content": f"Chat agent error: {inner_exc}"}

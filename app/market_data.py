@@ -12,6 +12,7 @@ import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app import db
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -144,23 +145,90 @@ def _download_raw_yfinance(nse_symbol: str, period: str) -> pd.DataFrame:
     return _validate_frame(frame)
 
 
+def _period_to_days(period: str) -> int:
+    """Convert a yfinance-style period string ('5d', '6mo', '1y', '2y') to a day count."""
+    period = period.strip().lower()
+    try:
+        if period.endswith("d"):
+            return int(period[:-1])
+        if period.endswith("mo"):
+            return int(period[:-2]) * 31
+        if period.endswith("y"):
+            return int(period[:-1]) * 366
+    except ValueError:
+        pass
+    return 365
+
+
+def _download_raw_groww(clean_symbol: str, period: str) -> Optional[pd.DataFrame]:
+    """Fetch daily historical candles from Groww (ADR-036). Returns None if unavailable.
+
+    Fails fast (no retries) so the caller can fall back to yfinance immediately;
+    yfinance already has its own retry policy.
+    """
+    from app.groww_client import get_groww_client
+
+    client = get_groww_client()
+    if not client.is_configured():
+        return None
+
+    end_dt = datetime.now(timezone.utc)
+    start_dt = end_dt - pd.Timedelta(days=_period_to_days(period))
+    response = client.get_historical_candle_data(
+        trading_symbol=clean_symbol,
+        start_time=start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        end_time=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        interval_in_minutes=1440,
+    )
+    candles = response.get("candles") if response else None
+    if not candles:
+        return None
+
+    records = []
+    index_dates = []
+    for candle in candles:
+        # [epoch_seconds, open, high, low, close, volume]
+        index_dates.append(pd.to_datetime(candle[0], unit="s"))
+        records.append({
+            "Open": float(candle[1]),
+            "High": float(candle[2]),
+            "Low": float(candle[3]),
+            "Close": float(candle[4]),
+            "Volume": int(candle[5]),
+        })
+    frame = pd.DataFrame(records, index=index_dates)
+    return _validate_frame(frame)
+
+
+def _download_raw(clean_symbol: str, yfinance_ticker: str, period: str) -> tuple[pd.DataFrame, str]:
+    """Groww-first historical fetch with automatic yfinance fallback (ADR-036)."""
+    if get_settings().GROWW_MARKET_DATA_ENABLED:
+        try:
+            frame = _download_raw_groww(clean_symbol, period)
+            if frame is not None and not frame.empty:
+                return frame, "groww_historical"
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Groww historical data unavailable for %s (%s); falling back to yfinance.", clean_symbol, exc)
+    return _download_raw_yfinance(yfinance_ticker, period=period), "yfinance"
+
+
 def load_history(nse_symbol: str, period: str = "1y", use_cache: bool = True) -> MarketDataResult:
-    """Load historical OHLCV data using incremental PostgreSQL caching with yfinance fallback."""
+    """Load historical OHLCV data using incremental PostgreSQL caching with Groww-first, yfinance-fallback sourcing."""
     clean_sym = _canonical_symbol(nse_symbol)
     yfinance_ticker = nse_symbol if nse_symbol.endswith(".NS") else f"{clean_sym}.NS"
 
     if not use_cache:
-        frame = _download_raw_yfinance(yfinance_ticker, period=period)
-        return MarketDataResult(frame=frame, source="yfinance", fetched_at=datetime.now(timezone.utc))
+        frame, source = _download_raw(clean_sym, yfinance_ticker, period)
+        return MarketDataResult(frame=frame, source=source, fetched_at=datetime.now(timezone.utc))
 
     cached_frame = load_cached_bars(clean_sym)
 
     # If warm cache with sufficient history (>= 50 bars), do delta update
     if cached_frame is not None and len(cached_frame) >= 50:
         try:
-            delta_frame = _download_raw_yfinance(yfinance_ticker, period="5d")
+            delta_frame, delta_source = _download_raw(clean_sym, yfinance_ticker, "5d")
             if delta_frame is not None and not delta_frame.empty:
-                save_bars(clean_sym, delta_frame, source="yfinance")
+                save_bars(clean_sym, delta_frame, source=delta_source)
                 merged = load_cached_bars(clean_sym)
                 if merged is not None and not merged.empty:
                     return MarketDataResult(
@@ -182,9 +250,9 @@ def load_history(nse_symbol: str, period: str = "1y", use_cache: bool = True) ->
 
     # Cold start: download full period and populate database
     try:
-        frame = _download_raw_yfinance(yfinance_ticker, period=period)
-        save_bars(clean_sym, frame, source="yfinance")
-        return MarketDataResult(frame=frame, source="yfinance", fetched_at=datetime.now(timezone.utc))
+        frame, source = _download_raw(clean_sym, yfinance_ticker, period)
+        save_bars(clean_sym, frame, source=source)
+        return MarketDataResult(frame=frame, source=source, fetched_at=datetime.now(timezone.utc))
     except Exception as exc:
         if cached_frame is not None and not cached_frame.empty:
             logger.warning(
@@ -198,3 +266,47 @@ def load_history(nse_symbol: str, period: str = "1y", use_cache: bool = True) ->
                 fetched_at=datetime.now(timezone.utc),
             )
         raise
+
+
+SECTOR_INDEX_TICKERS: dict[str, str] = {
+    "IT": "^CNXIT",
+    "BANKING": "^NSEBANK",
+    "AUTO": "^CNXAUTO",
+    "PHARMA": "^CNXPHARMA",
+    "METALS": "^CNXMETAL",
+    "FMCG": "^CNXFMCG",
+    "ENERGY": "^CNXENERGY",
+    "REALTY": "^CNXREALTY",
+    "INFRA": "^CNXINFRA",
+}
+
+
+def resample_to_weekly(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """Resample daily OHLCV DataFrame into weekly Friday bars (ADR-030)."""
+    if daily_df is None or daily_df.empty:
+        return pd.DataFrame()
+    df = daily_df.copy()
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    weekly = df.resample("W-FRI").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).dropna()
+    return weekly
+
+
+def load_sector_indices_history(period: str = "6mo") -> dict[str, pd.DataFrame]:
+    """Load historical daily bars for key NSE Sectoral Indices (ADR-029)."""
+    results = {}
+    for sector, ticker in SECTOR_INDEX_TICKERS.items():
+        try:
+            res = load_history(ticker, period=period)
+            if res and res.frame is not None and not res.frame.empty:
+                results[sector] = res.frame
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not load sector index %s (%s): %s", sector, ticker, exc)
+    return results
+

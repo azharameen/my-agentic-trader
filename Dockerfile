@@ -18,9 +18,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application source.
+# Copy the application source and compiled frontend assets.
 COPY config ./config
 COPY app ./app
+COPY frontend/dist ./frontend/dist
 
 # Create the data & logs directories and hand ownership to the non-root user.
 RUN mkdir -p /app/data /app/logs && chown -R trader:trader /app

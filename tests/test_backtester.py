@@ -123,5 +123,46 @@ def test_cmd_backtest_cli_invocation(monkeypatch, capsys):
     cmd_backtest(args)
 
     captured = capsys.readouterr()
-    assert "BACKTEST SCORECARD — TESTCLI" in captured.out
+    assert "BACKTEST SCORECARD" in captured.out
+    assert "TESTCLI" in captured.out
     assert "Initial Capital:   ₹50,000.00" in captured.out
+
+
+def test_monte_carlo_simulation():
+    from app.backtester import BacktestTrade, run_monte_carlo_simulation
+
+    synthetic_trades = [
+        BacktestTrade(
+            trade_id="T1", symbol="TEST", strategy_name="PULLBACK",
+            entry_date="2024-01-01", entry_price=100.0, quantity=10,
+            soft_stop=95.0, hard_stop=90.0, target_price=120.0,
+            net_pnl=150.0,
+        ),
+        BacktestTrade(
+            trade_id="T2", symbol="TEST", strategy_name="PULLBACK",
+            entry_date="2024-01-10", entry_price=100.0, quantity=10,
+            soft_stop=95.0, hard_stop=90.0, target_price=120.0,
+            net_pnl=-80.0,
+        ),
+        BacktestTrade(
+            trade_id="T3", symbol="TEST", strategy_name="PULLBACK",
+            entry_date="2024-01-20", entry_price=100.0, quantity=10,
+            soft_stop=95.0, hard_stop=90.0, target_price=120.0,
+            net_pnl=200.0,
+        ),
+    ]
+
+    mc = run_monte_carlo_simulation(synthetic_trades, initial_capital=100_000.0, num_simulations=500)
+    assert mc["sample_trades_count"] == 3
+    assert mc["num_simulations"] == 500
+    assert "p95_max_drawdown_pct" in mc
+    assert "expected_return_p50_pct" in mc
+    assert len(mc["distribution_buckets"]) > 0
+
+
+def test_monte_carlo_empty_trades():
+    from app.backtester import run_monte_carlo_simulation
+
+    mc = run_monte_carlo_simulation([], initial_capital=100_000.0)
+    assert mc["sample_trades_count"] == 0
+    assert mc["probability_of_ruin_pct"] == 0.0

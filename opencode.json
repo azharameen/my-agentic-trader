@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "shadcn": {
+      "type": "local",
+      "command": [
+        "npx",
+        "shadcn@latest",
+        "mcp"
+      ],
+      "enabled": true
+    },
+    "docs-langchain": {
+      "url": "https://docs.langchain.com/mcp",
+      "type": "remote"
+    },
+    "reference-langchain": {
+      "url": "https://reference.langchain.com/mcp",
+      "type": "remote"
+    }
+  }
+}

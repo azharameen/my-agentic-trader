@@ -248,3 +248,69 @@ def test_screener_compute_indicators_extension():
     # Verify high_20 is shifted (bar 50 high_20 reflects max high of previous 20 bars)
     assert not pd.isna(computed["high_20"].iloc[-1])
     assert not pd.isna(computed["bb_middle_20"].iloc[-1])
+
+
+def test_mtf_confluence_qualification(base_settings):
+    pullback = strategies.PullbackInUptrendStrategy()
+    breakout = strategies.BreakoutMomentumStrategy()
+
+    # Pullback with passing MTF
+    row_pb_pass = pd.Series({
+        "close": 150.0,
+        "ema_200": 140.0,
+        "rsi_14": 38.0,
+        "volume": 1000.0,
+        "avg_volume_20": 1000.0,
+        "weekly_ema_30": 145.0,
+        "weekly_rsi_14": 48.0,
+    })
+    assert pullback.qualifies(row_pb_pass, base_settings) is True
+
+    # Pullback fails MTF weekly EMA (close < weekly_ema_30)
+    row_pb_fail_ema = pd.Series({
+        "close": 150.0,
+        "ema_200": 140.0,
+        "rsi_14": 38.0,
+        "volume": 1000.0,
+        "avg_volume_20": 1000.0,
+        "weekly_ema_30": 155.0,
+        "weekly_rsi_14": 48.0,
+    })
+    assert pullback.qualifies(row_pb_fail_ema, base_settings) is False
+
+    # Pullback fails MTF weekly RSI (< 45.0)
+    row_pb_fail_rsi = pd.Series({
+        "close": 150.0,
+        "ema_200": 140.0,
+        "rsi_14": 38.0,
+        "volume": 1000.0,
+        "avg_volume_20": 1000.0,
+        "weekly_ema_30": 145.0,
+        "weekly_rsi_14": 42.0,
+    })
+    assert pullback.qualifies(row_pb_fail_rsi, base_settings) is False
+
+    # Breakout with passing MTF
+    row_bo_pass = pd.Series({
+        "close": 210.0,
+        "high_20": 200.0,
+        "ema_50": 190.0,
+        "volume": 1600.0,
+        "avg_volume_20": 1000.0,
+        "weekly_ema_30": 195.0,
+        "weekly_rsi_14": 55.0,
+    })
+    assert breakout.qualifies(row_bo_pass, base_settings) is True
+
+    # Breakout fails MTF weekly RSI (< 50.0)
+    row_bo_fail_rsi = pd.Series({
+        "close": 210.0,
+        "high_20": 200.0,
+        "ema_50": 190.0,
+        "volume": 1600.0,
+        "avg_volume_20": 1000.0,
+        "weekly_ema_30": 195.0,
+        "weekly_rsi_14": 48.0,
+    })
+    assert breakout.qualifies(row_bo_fail_rsi, base_settings) is False
+
