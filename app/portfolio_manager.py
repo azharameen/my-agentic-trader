@@ -6,21 +6,17 @@ with slippage checks, tracking real-time position health, and handling capital r
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from app import db, market_data, universe
+from app import db, market_data
 from app.basket_generator import generate_strategy_basket
 from app.models_basket import (
     BatchExecutionRequest,
-    ExecutionConfirmationItem,
     PortfolioSummary,
     PositionHealthStatus,
-    ReinvestmentSuggestion,
-    RiskVibe,
     StrategyBasket,
 )
 
@@ -65,8 +61,9 @@ def create_user_portfolio_from_basket(
             position_id, portfolio_id, user_id, symbol, shares,
             suggested_price, entry_price, target_price, stop_loss_price,
             target2_price, target1_shares, target2_shares,
-            holding_period, status, created_at, layman_rationale, sector
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            holding_period, status, created_at, layman_rationale, sector,
+            source, investment_source, plan_status
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'BASKET', 'PLANNED', 'PLANNED');
         """
         db.execute(
             pos_query,
@@ -131,7 +128,10 @@ def confirm_batch_execution(request: BatchExecutionRequest) -> PortfolioSummary:
             filled_at = %s,
             highest_price = %s,
             trailing_stop = %s,
-            broker_name = %s
+            broker_name = %s,
+            source = 'BASKET',
+            investment_source = 'PLANNED',
+            plan_status = 'BOUGHT'
         WHERE position_id = %s;
         """
         db.execute(
@@ -331,172 +331,3 @@ def get_user_portfolio(
         total_net_pnl=round(total_net_pnl, 2),
         active_positions=active_positions,
     )
-
-
-def confirm_position_exit(
-    position_id: str,
-    exit_price: float,
-    shares_to_exit: Optional[int] = None,
-    user_id: str = "default_user",
-) -> ReinvestmentSuggestion:
-    """Record partial (50% tranche) or full exit on broker, calculate net realized profit, and recommend capital reinvestment."""
-    db.init_all_tables()
-    now_utc = datetime.now(timezone.utc).isoformat()
-
-    row = db.fetchone(
-        "SELECT * FROM user_positions WHERE position_id = %s;",
-        (position_id,),
-    )
-    if not row:
-        raise ValueError(f"Position {position_id} not found.")
-
-    current_shares = int(row["shares"])
-    entry = float(row["entry_price"])
-    symbol = row["symbol"]
-    portfolio_id = row["portfolio_id"]
-
-    exit_qty = shares_to_exit if (shares_to_exit and 0 < shares_to_exit < current_shares) else current_shares
-    is_partial = exit_qty < current_shares
-
-    gross_return = exit_price * exit_qty
-    cost_basis = entry * exit_qty
-    realized_pnl = round(gross_return - cost_basis, 2)
-
-    # Calculate statutory tax & charges
-    charges = round((cost_basis + gross_return) * 0.001, 2)
-    tax = round(max(0.0, realized_pnl) * 0.20, 2)
-    net_realized_pnl = round(realized_pnl - charges - tax, 2)
-
-    if is_partial:
-        # Partial exit (Tranche 1): decrease remaining shares, lock stop loss at entry price
-        remaining_shares = current_shares - exit_qty
-        db.execute(
-            """
-            UPDATE user_positions SET
-                shares = %s,
-                tranche1_exited = TRUE,
-                breakeven_locked = TRUE,
-                trailing_stop = %s,
-                stop_loss_price = %s,
-                realized_pnl = COALESCE(realized_pnl, 0) + %s
-            WHERE position_id = %s;
-            """,
-            (remaining_shares, entry, entry, realized_pnl, position_id),
-        )
-    else:
-        # Full exit
-        db.execute(
-            """
-            UPDATE user_positions SET
-                status = 'EXITED',
-                exit_price = %s,
-                exit_at = %s,
-                realized_pnl = COALESCE(realized_pnl, 0) + %s
-            WHERE position_id = %s;
-            """,
-            (exit_price, now_utc, realized_pnl, position_id),
-        )
-
-    # Credit freed capital back to portfolio cash balance
-    port_row = db.fetchone(
-        "SELECT * FROM user_portfolios WHERE portfolio_id = %s;", (portfolio_id,)
-    )
-    if port_row:
-        current_cash = float(port_row["cash_balance"])
-        new_cash = current_cash + gross_return
-        db.execute(
-            "UPDATE user_portfolios SET cash_balance = %s WHERE portfolio_id = %s;",
-            (round(new_cash, 2), portfolio_id),
-        )
-
-    # Generate reinvestment basket proposal for freed capital
-    reinvest_basket = generate_strategy_basket(
-        capital=max(5000.0, gross_return),
-        risk_vibe=RiskVibe.BALANCED,
-        max_stocks=2,
-    )
-
-    return ReinvestmentSuggestion(
-        freed_capital=round(gross_return, 2),
-        realized_pnl=realized_pnl,
-        exited_symbol=symbol,
-        estimated_net_pnl=net_realized_pnl,
-        stcg_tax_deducted=tax,
-        new_opportunities=reinvest_basket.allocations,
-    )
-
-
-def evaluate_portfolio_ai_doctor(user_id: str = "default_user") -> dict[str, Any]:
-    """Run AI Doctor multi-agent health diagnostic across all user's active holdings."""
-    summary = get_user_portfolio(user_id=user_id)
-    if not summary or not summary.active_positions:
-        return {
-            "overall_health_score": 95,
-            "portfolio_verdict": "No active Demat positions currently being tracked. Sync your Groww holdings or generate a new investment plan.",
-            "total_positions_reviewed": 0,
-            "reviews": [],
-        }
-
-    reviews = []
-    total_score = 0
-    for pos in summary.active_positions:
-        sym = pos.symbol
-        pnl_pct = pos.pnl_pct
-        progress = pos.target_progress_pct
-
-        # Determine diagnostic rating
-        if pnl_pct >= 8.0 or progress >= 80.0:
-            rating = "TAKE_PROFIT_TRANCHE_1"
-            health_score = 95
-            bull_note = f"Strong upward breakout. Stock gained +{pnl_pct}% from entry ₹{pos.entry_price:.2f}."
-            bear_note = f"Approaching swing resistance near ₹{pos.target_price:.2f}. Partial profit-taking advised."
-            action_plan = f"Sell 50% ({pos.target1_shares or 1} sh) to lock profit. Trail stop to entry ₹{pos.entry_price:.2f}."
-        elif pnl_pct <= -4.0:
-            rating = "DEFENSE_ALERT"
-            health_score = 65
-            bull_note = f"Position under pressure at ₹{pos.current_price:.2f} ({pnl_pct}%). Monitoring key support."
-            bear_note = f"Breached minor moving averages. Stop-loss at ₹{pos.stop_loss_price:.2f} must be respected."
-            action_plan = f"Keep strict stop-loss active at ₹{pos.stop_loss_price:.2f}. Do not average down."
-        elif pos.breakeven_locked:
-            rating = "RISK_FREE_RUNNER"
-            health_score = 90
-            bull_note = f"Tranche 1 locked. Position is risk-free with stop at entry ₹{pos.entry_price:.2f}."
-            bear_note = f"Watch for consolidation before testing Target 2 (₹{pos.target2_price:.2f})."
-            action_plan = "Hold runner shares and let profits compound."
-        else:
-            rating = "HEALTHY_SWING"
-            health_score = 85
-            bull_note = f"Price action consolidating above entry ₹{pos.entry_price:.2f}. Primary trend intact."
-            bear_note = f"Stop-loss protection at ₹{pos.stop_loss_price:.2f} bounds downside risk to -6%."
-            action_plan = f"Hold position. Next milestone: Target 1 at ₹{pos.target_price:.2f} ({progress}% progress)."
-
-        total_score += health_score
-        reviews.append({
-            "symbol": sym,
-            "shares": pos.shares,
-            "entry_price": pos.entry_price,
-            "current_price": pos.current_price,
-            "pnl_pct": pos.pnl_pct,
-            "rating": rating,
-            "health_score": health_score,
-            "bull_thesis": bull_note,
-            "bear_thesis": bear_note,
-            "action_plan": action_plan,
-            "stop_loss": pos.stop_loss_price,
-            "target1": pos.target1_price or pos.target_price,
-            "target2": pos.target2_price,
-        })
-
-    avg_score = round(total_score / len(summary.active_positions)) if summary.active_positions else 90
-    verdict = (
-        "🟢 Overall Demat portfolio health is Excellent. Risk is tightly bounded."
-        if avg_score >= 85
-        else "🟡 Demat portfolio health is Moderate. Review defense alerts."
-    )
-
-    return {
-        "overall_health_score": avg_score,
-        "portfolio_verdict": verdict,
-        "total_positions_reviewed": len(reviews),
-        "reviews": reviews,
-    }

@@ -1,6 +1,6 @@
 """Unit tests for Groww FastAPI REST endpoints."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -95,17 +95,30 @@ def test_groww_sync_route(monkeypatch):
     monkeypatch.setenv("GROWW_ACCESS_TOKEN", "valid_token")
     get_settings.cache_clear()
 
-    with patch.object(
-        groww_client.GrowwClient,
-        "sync_to_portfolio_tracker",
+    with patch(
+        "app.groww_sync.sync_groww_portfolio",
         return_value={
+            "status": "OK",
             "synced_count": 2,
             "holdings_found": 2,
-            "message": "Successfully synced 2 new holdings from Groww Demat into TrAId portfolio monitor.",
+            "updated_count": 0,
+            "closed_count": 0,
         },
     ):
         response = client.post("/api/v1/groww/sync")
         assert response.status_code == 200
         data = response.json()
         assert data["synced_count"] == 2
-        assert "Successfully synced" in data["message"]
+        assert data["holdings_found"] == 2
+
+
+def test_groww_orders_route(monkeypatch):
+    monkeypatch.setenv("GROWW_ENABLED", "true")
+    monkeypatch.setenv("GROWW_ACCESS_TOKEN", "valid_token")
+    get_settings.cache_clear()
+    with patch.object(
+        groww_client.GrowwClient, "get_orders", return_value=[{"trading_symbol": "INFY"}]
+    ):
+        response = client.get("/api/v1/groww/orders")
+    assert response.status_code == 200
+    assert response.json() == [{"trading_symbol": "INFY"}]

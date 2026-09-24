@@ -10,6 +10,44 @@ def test_get_symbol_history_reports_no_run_when_absent():
     assert "No pipeline run recorded" in chat_agent.get_symbol_history("NEVERRUN")
 
 
+def test_generate_investment_plan_rejects_invalid_risk_vibe():
+    result = chat_agent.generate_investment_plan(capital=50000.0, risk_vibe="YOLO", goal="SAFE_GROWTH")
+    assert "Invalid risk_vibe" in result
+
+
+def test_generate_investment_plan_rejects_invalid_goal():
+    result = chat_agent.generate_investment_plan(capital=50000.0, risk_vibe="BALANCED", goal="MOONSHOT")
+    assert "Invalid goal" in result
+
+
+def test_generate_investment_plan_rejects_too_little_capital():
+    result = chat_agent.generate_investment_plan(capital=1000.0, risk_vibe="BALANCED", goal="SAFE_GROWTH")
+    assert "at least" in result
+
+
+def test_ask_user_question_returns_structured_questionnaire_payload():
+    import json as _json
+
+    result = chat_agent.ask_user_question(
+        question="How much do you want to invest?",
+        choices=[{"value": "50000", "label": "₹50,000"}],
+        field="capital",
+    )
+    payload = _json.loads(result)
+    assert payload["structured_type"] == "questionnaire"
+    assert payload["questionnaire"]["field"] == "capital"
+    assert payload["questionnaire"]["choices"][0]["value"] == "50000"
+
+
+def test_generate_investment_plan_returns_structured_basket_payload():
+    import json as _json
+
+    result = chat_agent.generate_investment_plan(capital=60000.0, risk_vibe="BALANCED", goal="SAFE_GROWTH")
+    payload = _json.loads(result)
+    assert payload["structured_type"] == "investment_basket"
+    assert payload["basket"]["allocations"]
+
+
 def test_get_symbol_history_reports_step_trail_after_a_run(monkeypatch):
     def _pullback_assessment(*_args, **_kwargs):
         return CatalystAssessment(

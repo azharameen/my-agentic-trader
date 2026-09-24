@@ -11,13 +11,24 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, Set
+from typing import Any, AsyncGenerator, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 # Active SSE listener queues
 _subscribers: Set[asyncio.Queue] = set()
 _subscribers_lock = asyncio.Lock()
+
+# Reference to the FastAPI/uvicorn event loop, captured at startup so that
+# broadcasts triggered from background threads (e.g. APScheduler jobs) can be
+# safely scheduled onto it instead of silently no-oping.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def bind_main_loop(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    """Capture the running asyncio loop so background threads can broadcast."""
+    global _main_loop
+    _main_loop = loop or asyncio.get_event_loop()
 
 
 async def subscribe() -> AsyncGenerator[Dict[str, Any], None]:
@@ -56,20 +67,30 @@ def broadcast_event(event_type: str, payload: Dict[str, Any]) -> None:
         }),
     }
 
-    # If an asyncio event loop is running, schedule put onto each subscriber queue
+    def _dispatch() -> None:
+        for q in list(_subscribers):
+            try:
+                q.put_nowait(event_data)
+            except asyncio.QueueFull:
+                # If a slow subscriber has filled its buffer, drop the oldest to stay responsive
+                try:
+                    q.get_nowait()
+                    q.put_nowait(event_data)
+                except Exception:  # noqa: BLE001
+                    pass
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop in the current thread (e.g. called from synchronous background thread)
+        loop = None
+
+    if loop is not None:
+        _dispatch()
         return
 
-    for q in list(_subscribers):
-        try:
-            q.put_nowait(event_data)
-        except asyncio.QueueFull:
-            # If a slow subscriber has filled its buffer, drop the oldest to stay responsive
-            try:
-                q.get_nowait()
-                q.put_nowait(event_data)
-            except Exception:  # noqa: BLE001
-                pass
+    # Called from a synchronous background thread (e.g. APScheduler job) —
+    # schedule the dispatch onto the captured main loop instead of dropping it.
+    if _main_loop is not None and _main_loop.is_running():
+        _main_loop.call_soon_threadsafe(_dispatch)
+    else:
+        logger.debug("No active event loop bound; dropping event %s", event_type)

@@ -124,7 +124,7 @@ export const MetricRibbon: React.FC<MetricRibbonProps> = ({ overview }) => {
             {overview.pending_proposals_count}
           </div>
           <div className="text-[11px] text-muted-foreground/70 mt-0.5">
-            Action required in Cockpit
+            Action required in Command Center
           </div>
         </CardContent>
       </Card>

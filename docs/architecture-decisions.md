@@ -596,9 +596,9 @@ choices require a new ADR or an explicit superseding decision.
      - Split positions into Target 1 (50% shares, +8-10%) and Target 2 (50% shares, +16-20%).
      - Automatically ratchet stop loss to Break-Even when price advances $\ge +4\%$.
      - Calculate Net In-Pocket P&L after estimated STT friction and STCG tax (20%).
-  4. **Daily Zen Briefing & Milestone Compounding (`app/digest_generator.py`)**:
-     - Generate morning/evening digests with "Zen / No Action Needed" reassurance.
-     - Automatically recommend fresh reinvestment baskets for freed capital upon trade exits.
+   4. **Retired legacy UI workflows**:
+      - The former Beginner Wealth Copilot screen, daily digest HTTP endpoints, reinvestment exit flow, and AI Portfolio Doctor screen were removed during Command Center consolidation.
+      - Basket generation and batch execution remain available to the conversational agent where required.
 - Consequence: Transforms TrAId into a comprehensive, anxiety-free wealth building system for retail investors.
 
 ## ADR-035: Read-Only Groww API Integration for Portfolio & Margin Synchronization
@@ -609,7 +609,7 @@ choices require a new ADR or an explicit superseding decision.
   1. **Read-Only Scope**: Integrate Groww's official Trading/Cloud API solely for read operations (`get_user_margin`, `get_holdings_for_user`, `get_positions_for_user`, `get_order_list`).
   2. **Fail-Closed Order Guard**: Any attempt to call order creation, modification, or cancellation functions via the Groww client raises an explicit `RuntimeError("Order execution via Groww is prohibited by platform policy")`.
   3. **Automated Token Management**: Support both TOTP-based daily token generation (`GROWW_API_KEY` + `GROWW_API_SECRET` / TOTP Secret via `pyotp`) and direct session tokens (`GROWW_ACCESS_TOKEN`) with in-memory caching.
-  4. **User-Driven Synchronization**: Provide one-click UI actions in the Beginner Wealth Copilot to auto-fill investment capital from available Demat cash and import active holdings into the portfolio tracker.
+   4. **User-Driven Synchronization**: Provide scheduled and on-demand Groww synchronization into the Command Center's PostgreSQL portfolio snapshot.
 - Consequence: Delivers frictionless broker-backed portfolio synchronization without compromising safety, custody, or regulatory compliance.
 
 ## ADR-036: Groww-First Read-Only Market Data, Margin & Instrument Master Extension
@@ -618,9 +618,21 @@ choices require a new ADR or an explicit superseding decision.
 - Context: ADR-035 scoped Groww to portfolio/margin sync only; the screener, monitor, and stale-approval checks still relied solely on Yahoo Finance EOD data, and no fund-affordability signal existed on trade proposals presented to the human approver. The operator holds a free-tier Groww Trading API subscription (Live Data: 10 req/s, 300/min; Non-Trading incl. margin/history: 20 req/s, 500/min per Groww's published rate limits) which comfortably covers a NIFTY 100-scale universe scan (batched ≤50 symbols/call) and is not a reason to expand the trading universe beyond its current strategy-defined scope.
 - Decision:
   1. **Groww-First Historical Data, Automatic Fallback**: `app/market_data.py` now attempts Groww historical daily candles first (`GrowwClient.get_historical_candle_data`) via the new `GROWW_MARKET_DATA_ENABLED` setting (default `True`), and transparently falls back to the existing Yahoo Finance path (unchanged, still the always-available baseline) whenever Groww is unconfigured, unauthenticated, or errors/rate-limits. `MarketDataResult.source` gains the `"groww_historical"` provenance value; the existing PostgreSQL incremental-cache/fallback chain (ADR-026) is otherwise untouched.
-  2. **Read-Only Live Data Methods**: `GrowwClient` gains `get_quote`, `get_ltp` (batched ≤50 symbols/call), `get_ohlc`, `get_available_margin_details`, and `get_order_margin_details` — all read-only, wrapping the official `growwapi` SDK, fail-closed (return empty dict/list on any error).
+   2. **Read-Only Live Data Methods**: `GrowwClient` gains `get_quote`, `get_ltp` (batched ≤50 symbols/call), `get_ohlc`, `get_available_margin_details`, and `get_order_margin_details` — all read-only, using direct HTTP calls to Groww's documented endpoints, fail-closed (return empty dict/list on any error).
   3. **Informational Margin Check on Proposals**: `TradeProposal`/`ProposalCard`/`pending_proposals` gain optional `margin_required`/`margin_available` fields, populated in `graph._calculate_risk` via `get_order_margin_details` + `get_user_margin` when Groww is configured. This is **strictly informational** — it never gates, blocks, or auto-rejects a proposal (ADR-002/ADR-003 preserved). The Telegram proposal card (`telegram_bot._format_proposal_card`) surfaces a small warning line when the estimated margin required exceeds the operator's available Groww balance, but the human retains full Approve/Reject authority.
   4. **Instrument Master**: `GrowwClient.get_all_instruments()` / `get_instrument_by_groww_symbol()` expose the Groww instrument CSV (lot size, tick size, ISIN) for future validation use in `universe.py`/`risk.py`; wiring this into deterministic position-sizing rounding is deferred (no evidence yet of a tick-size-related sizing defect — YAGNI) and tracked as a follow-on sub-task.
-  5. **Test Isolation Hardening**: `tests/conftest.py`'s `isolated_settings` fixture now forces `GROWW_ENABLED=false` and `GROWW_MARKET_DATA_ENABLED=false` by default so a developer's real `.env` Groww credentials can never cause live network calls during the unit test suite; individual tests opt back in with explicit mocked SDK boundaries.
+   5. **Test Isolation Hardening**: `tests/conftest.py`'s `isolated_settings` fixture now forces `GROWW_ENABLED=false` and `GROWW_MARKET_DATA_ENABLED=false` by default so a developer's real `.env` Groww credentials can never cause live network calls during the unit test suite; individual tests opt back in with explicit mocked HTTP boundaries.
 - Consequence: More accurate, broker-grade live pricing/history and fund-affordability visibility for the human approver, with zero change to execution authority — Yahoo Finance remains a fully supported fallback data source, not a replaced dependency.
 
+## ADR-037: Database-Backed Unified Portfolio Command Center
+
+- Status: accepted
+- Context: The Command Center previously read Groww positions from `user_positions` only after a successful holdings import, while the separate Groww panel read the broker directly. This made the main table empty when Groww returned a valid authenticated response but denied the holdings scope, and it allowed a planned position and its later broker holding to appear as two rows.
+- Decision:
+  1. **PostgreSQL is the display source of truth**: Groww holdings and cash are synchronized into PostgreSQL before the Command Center overview is read. The UI never needs a separate live holdings fetch to render the portfolio.
+  2. **Positions fallback**: If settled holdings are empty or denied, positive CASH positions are normalized and persisted as broker holdings. The sync remains partial and exposes the Groww scope warning; it never invents holdings when both endpoints are empty.
+  3. **One row per active symbol**: A Groww symbol matches an existing active or pending `BASKET`/`MANUAL` position and updates that row in place. The row becomes `source='GROWW_SYNC'`, retains the plan/entry metadata, and records `investment_source='PLANNED_THEN_GROWW'` or `MANUAL_THEN_GROWW`. Duplicate active rows are retired.
+  4. **Lifecycle provenance**: `investment_source` identifies `GROWW_DIRECT`, `PLANNED_THEN_GROWW`, `MANUAL_THEN_GROWW`, `PLANNED`, or `MANUAL`; `plan_status` identifies `NONE`, `PLANNED`, or `BOUGHT`; `status` distinguishes active holdings from pending plans.
+  5. **Earnings contract**: `capital_invested` is cost basis of active stocks, F&O, and mutual funds; `unrealized_earnings` is current value minus cost basis; `realized_earnings` is closed paper-trade and tracked-position realized P&L; `total_earnings` is realized plus unrealized. Pending plans contribute zero invested capital until confirmed or observed at Groww.
+  6. **Groww control surface**: The Command Center stocks/F&O/mutual-fund tabs are the single portfolio display. The Groww button remains only for connection status, force sync, cash, orders, and access diagnostics, not a second holdings table.
+- Consequence: The operator sees one complete, database-backed portfolio with invested capital, current value, total earnings, broker/planning provenance, and plan status. A Groww permission failure is visible as a warning instead of silently producing an empty portfolio.

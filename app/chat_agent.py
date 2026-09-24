@@ -66,6 +66,26 @@ You have tools to:
   cash/margin balance, and live Demat equity holdings.
 - get_groww_quote(symbol): real-time Groww market quote (LTP, day change, day
   range, OHLC, 52-week range) for one NSE symbol. Read-only.
+- generate_investment_plan(capital, risk_vibe, goal): builds a diversified,
+  risk-sized swing-trading investment basket (this calls the deterministic
+  screener + risk engine — you never invent the stocks or prices yourself).
+  Use this ONLY after you have naturally gathered, through conversation, all
+  three required inputs from the operator:
+    * capital: how many rupees they want to invest (minimum ₹5,000)
+    * risk_vibe: one of CONSERVATIVE, BALANCED, MOMENTUM — map their plain
+      words to the closest fit (e.g. "I'm cautious/new to this" ->
+      CONSERVATIVE, "steady swing trades" -> BALANCED, "aggressive/high
+      growth" -> MOMENTUM) and confirm your interpretation with them
+    * goal: one of SAFE_GROWTH, VACATION_FUND, WEALTH_COMPOUNDING, LEARNING —
+      again, map their described goal to the closest option
+  If any of these is missing or ambiguous, ASK a short clarifying question
+  instead of guessing or calling the tool with placeholder values. This
+  basket only creates a PENDING_CONFIRMATION plan — nothing is bought until
+  the operator confirms actual fill prices in the UI, so it is safe to
+  create once you have real inputs.
+- ask_user_question(question, choices, field): render one structured
+  questionnaire step in the web chat. Use this instead of writing numbered
+  or bulleted questions in markdown while collecting plan inputs.
 
 Rules:
 1. You are READ/trigger-only. You can NEVER approve, reject, or kill a
@@ -77,6 +97,13 @@ Rules:
 4. When the operator asks you to "run" or "scan" a symbol, call run_symbol
    and then briefly report what happened (qualified / rejected / proposal
    sent for approval).
+5. When helping someone build an investment plan, have a real back-and-forth
+   conversation to gather capital/risk/goal — never assume defaults, and
+   never hardcode a fixed script of questions; ask whatever is still missing
+   in your own words, in whatever order makes sense given what they already
+    told you.
+6. For investment-plan clarification, call ask_user_question for each missing
+   input. Never emit a markdown list of questions as a substitute for the UI.
 """
 
 
@@ -214,6 +241,65 @@ def get_groww_quote(symbol: str) -> str:
     )
 
 
+def generate_investment_plan(capital: float, risk_vibe: str, goal: str = "SAFE_GROWTH") -> str:
+    """Build a diversified swing-trading investment basket for the given capital.
+
+    ONLY call this once you have gathered real capital/risk_vibe/goal from the
+    operator through conversation — never with placeholder values.
+
+    risk_vibe must be one of: CONSERVATIVE, BALANCED, MOMENTUM.
+    goal must be one of: SAFE_GROWTH, VACATION_FUND, WEALTH_COMPOUNDING, LEARNING.
+
+    Returns a JSON payload the UI renders as a rich basket card; the operator
+    still confirms actual fill prices before anything is treated as bought —
+    this tool never places or simulates an order by itself.
+    """
+    from app.basket_generator import generate_strategy_basket
+    from app.models_basket import InvestmentGoal, RiskVibe
+    from app.portfolio_manager import create_user_portfolio_from_basket
+
+    try:
+        vibe = RiskVibe(risk_vibe.strip().upper())
+    except ValueError:
+        return (
+            f"Invalid risk_vibe '{risk_vibe}'. Must be one of: "
+            f"{[v.value for v in RiskVibe]}. Ask the operator to clarify their risk appetite."
+        )
+    try:
+        parsed_goal = InvestmentGoal(goal.strip().upper())
+    except ValueError:
+        return (
+            f"Invalid goal '{goal}'. Must be one of: "
+            f"{[g.value for g in InvestmentGoal]}. Ask the operator to clarify their goal."
+        )
+    if capital < 5000:
+        return "Capital must be at least ₹5,000. Ask the operator for a larger investment amount."
+
+    basket = generate_strategy_basket(capital=capital, risk_vibe=vibe, goal=parsed_goal, max_stocks=4)
+    create_user_portfolio_from_basket(basket, user_id="default_user")
+    return json.dumps({"structured_type": "investment_basket", "basket": basket.model_dump()}, default=str)
+
+
+def ask_user_question(
+    question: str,
+    choices: list[dict[str, str]],
+    field: str,
+    description: str = "Choose an answer to continue.",
+    required: bool = True,
+) -> str:
+    """Render one agent-generated question as a structured web questionnaire step."""
+    return json.dumps({
+        "structured_type": "questionnaire",
+        "questionnaire": {
+            "field": field,
+            "question": question,
+            "description": description,
+            "required": required,
+            "choices": choices,
+        },
+    })
+
+
 def _get_checkpointer() -> Any:
     """Return the shared long-lived checkpointer."""
     return checkpoint.get_checkpointer()
@@ -238,6 +324,8 @@ def _build_agent() -> Any:
             get_symbol_history,
             get_groww_account_summary,
             get_groww_quote,
+            generate_investment_plan,
+            ask_user_question,
         ],
         system_prompt=_SYSTEM_PROMPT,
         checkpointer=_get_checkpointer(),
@@ -285,6 +373,7 @@ def stream_ask(question: str, thread_id: Optional[str] = None):
     Yields dictionary payloads formatted for SSE consumption:
     - {'type': 'status', 'content': '...'}
     - {'type': 'tool_start', 'tool': '...', 'input': '...'}
+    - {'type': 'tool_result', 'tool': '...', 'structured_type': '...', 'data': {...}} (rich UI payloads, e.g. investment_basket)
     - {'type': 'token', 'content': '...'}
     - {'type': 'done', 'full_answer': '...'}
     """
@@ -306,7 +395,19 @@ def stream_ask(question: str, thread_id: Optional[str] = None):
                     args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
                     yield {"type": "tool_start", "tool": name, "input": str(args)}
             elif hasattr(msg, "name") and getattr(msg, "name", None):
-                yield {"type": "tool_end", "tool": getattr(msg, "name"), "output": str(getattr(msg, "content", ""))[:200]}
+                tool_name = getattr(msg, "name")
+                raw_output = str(getattr(msg, "content", ""))
+                structured = None
+                try:
+                    parsed = json.loads(raw_output)
+                    if isinstance(parsed, dict) and "structured_type" in parsed:
+                        structured = parsed
+                except (json.JSONDecodeError, TypeError):
+                    structured = None
+                if structured is not None:
+                    yield {"type": "tool_result", "tool": tool_name, "structured_type": structured["structured_type"], "data": structured}
+                else:
+                    yield {"type": "tool_end", "tool": tool_name, "output": raw_output[:200]}
             elif hasattr(msg, "content") and msg.content:
                 text = msg.content if isinstance(msg.content, str) else str(msg.content)
                 if text:

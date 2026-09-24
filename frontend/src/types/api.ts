@@ -184,12 +184,53 @@ export interface SystemHealth {
   llm_configured: boolean;
 }
 
+export interface Schedule {
+  id: string;
+  name: string;
+  description: string;
+  action: 'daily_scan' | 'groww_demat_sync' | 'monthly_universe_refresh';
+  trigger_type: 'cron' | 'interval';
+  schedule: { minutes?: number; hour?: number; minute?: number; day_of_week?: string; day?: number };
+  timezone: string;
+  enabled: boolean;
+  next_run: string | null;
+  last_run_at?: string | null;
+  last_status?: string | null;
+  latest_run_request?: { requested_at: string; completed_at: string | null; status: string; error: string | null } | null;
+  last_error?: string | null;
+}
+
+export type ScheduleInput = Omit<Schedule, 'id' | 'trigger_type' | 'schedule' | 'next_run' | 'last_run_at' | 'last_status'> & {
+  trigger: 'cron' | 'interval';
+  hour?: number;
+  minute?: number;
+  day_of_week?: string;
+  day?: number;
+  interval_minutes?: number;
+};
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'agent' | 'tool';
   text: string;
   toolCalls?: Array<{ name: string; input?: string; output?: string }>;
+  basket?: StrategyBasket;
+  questionnaire?: AgentQuestionnaire;
   timestamp: string;
+}
+
+export interface AgentQuestionnaireChoice {
+  value: string;
+  label: string;
+  description?: string;
+}
+
+export interface AgentQuestionnaire {
+  field: string;
+  question: string;
+  description: string;
+  required: boolean;
+  choices: AgentQuestionnaireChoice[];
 }
 
 export interface UniverseConstituent {
@@ -312,70 +353,56 @@ export interface PortfolioSummary {
   active_positions: PositionHealthStatus[];
 }
 
-export interface DailyDigest {
-  digest_id: string;
-  digest_type: string;
-  date_str: string;
-  title: string;
-  greeting: string;
-  market_mood: string;
-  portfolio_summary_text: string;
-  total_portfolio_value: number;
-  daily_pnl_amount: number;
-  daily_pnl_pct: number;
-  zen_mode?: boolean;
-  zen_message?: string;
-  positions: PositionHealthStatus[];
-  action_alerts: string[];
-  earnings_alerts?: string[];
+// --------------------------------------------------------------------------- //
+// Command Center: unified holdings, manual entries, and agent signals
+// --------------------------------------------------------------------------- //
+export interface StockSignal {
+  action: 'BUY_MORE' | 'HOLD' | 'TRIM' | 'SELL';
+  label: string;
+  rationale: string;
+  analytics?: StockAnalytics;
 }
 
-export interface ReinvestmentSuggestion {
-  freed_capital: number;
-  realized_pnl: number;
-  exited_symbol: string;
-  estimated_net_pnl?: number;
-  stcg_tax_deducted?: number;
-  new_opportunities: StockAllocation[];
-}
-
-export interface GrowwStatus {
-  configured: boolean;
-  authenticated: boolean;
-  status: 'CONNECTED' | 'NOT_CONFIGURED' | 'ERROR';
-  message: string;
-  last_synced_at?: string;
-  ucc?: string;
-}
-
-export interface GrowwBalance {
-  available_cash: number;
-  collateral_margin: number;
-  used_margin: number;
-  total_margin: number;
-  currency: string;
-}
-
-export interface GrowwHolding {
+export interface CommandCenterStock {
+  position_id: string;
   symbol: string;
   company_name: string;
-  isin: string;
-  quantity: number;
-  avg_price: number;
+  shares: number;
+  entry_price: number;
   current_price: number;
+  stop_loss_price?: number | null;
+  target_price?: number | null;
   invested_amount: number;
   current_value: number;
   pnl: number;
   pnl_pct: number;
+  source: 'GROWW_SYNC' | 'MANUAL' | 'BASKET';
+  investment_source: 'GROWW_DIRECT' | 'PLANNED_THEN_GROWW' | 'MANUAL_THEN_GROWW' | 'PLANNED' | 'MANUAL';
+  plan_status: 'NONE' | 'PLANNED' | 'BOUGHT';
+  status: 'ACTIVE' | 'PENDING_CONFIRMATION';
+  broker_name?: string;
+  isin?: string;
+  editable: boolean;
+  signal: StockSignal;
 }
 
-export interface GrowwSyncResponse {
-  synced_count: number;
-  holdings_found: number;
-  message: string;
+export interface CommandCenterFno {
+  position_id: string;
+  symbol: string;
+  instrument_type: string;
+  strike_price?: number | null;
+  expiry_date?: string | null;
+  lot_size: number;
+  quantity: number;
+  entry_price: number;
+  current_price: number;
+  invested_amount: number;
+  current_value: number;
+  pnl: number;
+  editable: boolean;
 }
 
-export interface GrowwMutualFund {
+export interface CommandCenterMutualFund {
   folio_id: string;
   scheme_name: string;
   folio_number: string;
@@ -386,48 +413,59 @@ export interface GrowwMutualFund {
   pnl: number;
   pnl_pct: number;
   asset_category: string;
-  last_updated: string;
+  editable: boolean;
 }
 
-export interface GrowwPortfolioOverview {
-  ucc: string;
-  status: string;
-  total_net_worth: number;
-  equity_invested: number;
-  equity_current_value: number;
-  equity_pnl: number;
-  equity_pnl_pct: number;
-  mf_invested: number;
-  mf_current_value: number;
-  mf_pnl: number;
-  available_cash: number;
-  total_margin: number;
-  holdings_count: number;
-  mf_count: number;
-  last_synced_at: string;
-  is_demo_mode?: boolean;
-  scope_warning?: string;
-}
-
-export interface AIDoctorReview {
+export interface CommandCenterSuggestion {
+  proposal_id: string;
   symbol: string;
-  shares: number;
+  strategy_name: string;
   entry_price: number;
-  current_price: number;
-  pnl_pct: number;
-  rating: string;
-  health_score: number;
-  bull_thesis: string;
-  bear_thesis: string;
-  action_plan: string;
-  stop_loss: number;
-  target1: number;
-  target2: number;
+  target_price: number;
+  hard_stop: number;
+  risk_to_reward: number;
+  thesis: string;
 }
 
-export interface AIDoctorReport {
-  overall_health_score: number;
-  portfolio_verdict: string;
-  total_positions_reviewed: number;
-  reviews: AIDoctorReview[];
+export interface CommandCenterOverview {
+  generated_at: string;
+  totals: {
+    capital_invested: number;
+    current_value: number;
+    total_pnl: number;
+    unrealized_earnings: number;
+    realized_earnings: number;
+    total_earnings: number;
+    total_pnl_pct: number;
+    cash_available: number;
+  };
+  stocks: CommandCenterStock[];
+  fno: CommandCenterFno[];
+  mutual_funds: CommandCenterMutualFund[];
+  suggested: CommandCenterSuggestion[];
+  groww_connected: boolean;
+  groww_sync?: { status: string; error?: string; last_synced_at?: string };
+  market_regime: MarketRegime;
+}
+
+
+export interface StockAnalytics {
+  strategy_name?: string | null;
+  secondary_strategies: string[];
+  sector_name?: string | null;
+  sector_rs_20d?: number | null;
+  rsi?: number | null;
+  ema_200?: number | null;
+  qualifies: boolean;
+}
+
+export interface DeepDiveResponse {
+  symbol: string;
+  available: boolean;
+  research_verdict?: Record<string, unknown> | null;
+  catalyst_assessment?: Record<string, unknown> | null;
+  proposal_card?: Record<string, unknown> | null;
+  strategy_name?: string | null;
+  market_regime?: string | null;
+  citations?: string[];
 }

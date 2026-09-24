@@ -8,23 +8,55 @@ import {
   BacktestResult,
   SystemHealth,
   UniverseResponse,
-  InvestmentGoal,
-  RiskVibe,
-  StrategyBasket,
   BatchExecutionRequest,
   PortfolioSummary,
-  ReinvestmentSuggestion,
-  DailyDigest,
-  GrowwStatus,
-  GrowwBalance,
-  GrowwHolding,
-  GrowwSyncResponse,
-  GrowwMutualFund,
-  GrowwPortfolioOverview,
-  AIDoctorReport,
+  Schedule,
+  ScheduleInput,
 } from "../types/api";
 
 const BASE_URL = "/api";
+
+export async function fetchSchedules(): Promise<Schedule[]> {
+  const res = await fetch(`${BASE_URL}/schedules`);
+  if (!res.ok) throw new Error(`Schedules fetch failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function saveSchedule(schedule: ScheduleInput, id?: string): Promise<Schedule> {
+  const res = await fetch(`${BASE_URL}/schedules${id ? `/${id}` : ''}`, {
+    method: id ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(schedule),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || 'Failed to save schedule');
+  }
+  return res.json();
+}
+
+export async function setScheduleEnabled(id: string, enabled: boolean): Promise<Schedule> {
+  const res = await fetch(`${BASE_URL}/schedules/${id}/enabled`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(`Schedule update failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function runScheduleNow(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/schedules/${id}/run`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || 'Failed to run schedule');
+  }
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/schedules/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Schedule delete failed: ${res.statusText}`);
+}
 
 export async function fetchOverview(): Promise<OverviewData> {
   const res = await fetch(`${BASE_URL}/overview`);
@@ -181,29 +213,6 @@ export async function fetchSymbolLevels(symbol: string): Promise<ChartLevels> {
 // Beginner User Journey API Functions
 // --------------------------------------------------------------------------- //
 
-export async function generateBasket(
-  capital: number,
-  riskVibe: RiskVibe = 'BALANCED',
-  goal: InvestmentGoal = 'SAFE_GROWTH',
-  maxStocks: number = 4
-): Promise<StrategyBasket> {
-  const res = await fetch(`${BASE_URL}/v1/strategy/generate-basket`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      capital,
-      risk_vibe: riskVibe,
-      goal,
-      max_stocks: maxStocks,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || 'Failed to generate investment strategy basket');
-  }
-  return res.json();
-}
-
 export async function confirmBatchExecutions(
   request: BatchExecutionRequest
 ): Promise<PortfolioSummary> {
@@ -219,109 +228,124 @@ export async function confirmBatchExecutions(
   return res.json();
 }
 
-export async function fetchActivePortfolioHealth(
-  userId: string = 'default_user'
-): Promise<PortfolioSummary | null> {
-  const res = await fetch(`${BASE_URL}/v1/portfolio/active-health?user_id=${userId}`);
-  if (!res.ok) throw new Error(`Active portfolio fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function exitPosition(
-  positionId: string,
-  exitPrice: number,
-  sharesToExit?: number,
-  userId: string = 'default_user'
-): Promise<ReinvestmentSuggestion> {
-  const res = await fetch(`${BASE_URL}/v1/portfolio/exit-position`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      position_id: positionId,
-      exit_price: exitPrice,
-      shares_to_exit: sharesToExit,
-      user_id: userId,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || 'Failed to exit position');
-  }
-  return res.json();
-}
-
-export async function fetchMorningDigest(
-  userId: string = 'default_user'
-): Promise<DailyDigest> {
-  const res = await fetch(`${BASE_URL}/v1/digests/morning?user_id=${userId}`);
-  if (!res.ok) throw new Error(`Morning digest fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function fetchEveningDigest(
-  userId: string = 'default_user'
-): Promise<DailyDigest> {
-  const res = await fetch(`${BASE_URL}/v1/digests/evening?user_id=${userId}`);
-  if (!res.ok) throw new Error(`Evening digest fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
 // --------------------------------------------------------------------------- //
 // Groww Broker API Integration (Read-Only, ADR-035)
 // --------------------------------------------------------------------------- //
 
-export async function fetchGrowwStatus(): Promise<GrowwStatus> {
-  const res = await fetch(`${BASE_URL}/v1/groww/status`);
-  if (!res.ok) throw new Error(`Groww status fetch failed: ${res.statusText}`);
+// --------------------------------------------------------------------------- //
+// Command Center: unified holdings, manual entries, and agent signals
+// --------------------------------------------------------------------------- //
+import { CommandCenterOverview } from "../types/api";
+
+export async function fetchCommandCenterOverview(): Promise<CommandCenterOverview> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/overview`);
+  if (!res.ok) throw new Error(`Command Center overview fetch failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function fetchGrowwBalance(): Promise<GrowwBalance> {
-  const res = await fetch(`${BASE_URL}/v1/groww/balance`);
-  if (!res.ok) throw new Error(`Groww balance fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function fetchGrowwHoldings(): Promise<GrowwHolding[]> {
-  const res = await fetch(`${BASE_URL}/v1/groww/holdings`);
-  if (!res.ok) throw new Error(`Groww holdings fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function syncGrowwPortfolio(userId: string = 'default_user'): Promise<GrowwSyncResponse> {
-  const res = await fetch(`${BASE_URL}/v1/groww/sync?user_id=${userId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+export async function addManualStock(payload: {
+  symbol: string;
+  shares: number;
+  entry_price: number;
+  stop_loss_price?: number;
+  target_price?: number;
+  sector?: string;
+}): Promise<{ position_id: string }> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/stocks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.detail || 'Failed to sync Groww portfolio');
+    throw new Error(err.detail || "Failed to add stock");
   }
   return res.json();
 }
 
-export async function fetchGrowwMutualFunds(userId: string = 'default_user'): Promise<GrowwMutualFund[]> {
-  const res = await fetch(`${BASE_URL}/v1/groww/mutual-funds?user_id=${userId}`);
-  if (!res.ok) throw new Error(`Groww mutual funds fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function fetchGrowwPortfolioOverview(userId: string = 'default_user'): Promise<GrowwPortfolioOverview> {
-  const res = await fetch(`${BASE_URL}/v1/groww/portfolio-overview?user_id=${userId}`);
-  if (!res.ok) throw new Error(`Groww portfolio overview fetch failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function fetchPortfolioAIDoctor(userId: string = 'default_user'): Promise<AIDoctorReport> {
-  const res = await fetch(`${BASE_URL}/v1/portfolio/ai-doctor?user_id=${userId}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+export async function updateManualStock(
+  positionId: string,
+  payload: Partial<{ shares: number; entry_price: number; stop_loss_price: number; target_price: number }>
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/stocks/${positionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.detail || 'Failed to run AI Doctor portfolio evaluation');
+    throw new Error(err.detail || "Failed to update stock");
+  }
+}
+
+export async function deleteManualStock(positionId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/stocks/${positionId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to delete stock");
+  }
+}
+
+export async function addFnoPosition(payload: {
+  symbol: string;
+  instrument_type: string;
+  quantity: number;
+  entry_price: number;
+  lot_size?: number;
+  strike_price?: number;
+  expiry_date?: string;
+}): Promise<{ position_id: string }> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/fno`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to add F&O position");
   }
   return res.json();
 }
 
+export async function deleteFnoPosition(positionId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/fno/${positionId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to delete F&O position");
+  }
+}
 
+export async function addMutualFund(payload: {
+  scheme_name: string;
+  units: number;
+  nav: number;
+  invested_amount: number;
+  folio_number?: string;
+  asset_category?: string;
+}): Promise<{ folio_id: string }> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/mutual-funds`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to add mutual fund");
+  }
+  return res.json();
+}
+
+export async function deleteMutualFund(folioId: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/v1/command-center/mutual-funds/${folioId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to delete mutual fund");
+  }
+}
+
+
+export async function fetchDeepDive(symbol: string) {
+  const res = await fetch(`${BASE_URL}/v1/command-center/deep-dive/${symbol}`);
+  if (!res.ok) throw new Error(`Deep dive fetch failed: ${res.statusText}`);
+  return res.json() as Promise<import("../types/api").DeepDiveResponse>;
+}

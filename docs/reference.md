@@ -197,6 +197,17 @@ empty.
 | Portfolio context | Groww supported read-only endpoints | Groww credentials | No order endpoints exposed to agents; also used Groww-first (yfinance-fallback) for historical daily candles, live quote/LTP/OHLC, and margin estimates (ADR-036) |
 | Document extraction | Local PDF/text tooling | No | Prefer local parsing before paid extraction |
 
+### Command Center portfolio fields
+
+| Field | Meaning |
+|---|---|
+| `capital_invested` | Cost basis of active stocks, F&O, and mutual funds. Pending plans are excluded. |
+| `unrealized_earnings` | Current value minus active cost basis. |
+| `realized_earnings` | Realized P&L from closed paper trades and tracked position exits. |
+| `total_earnings` | `realized_earnings + unrealized_earnings`. |
+| `investment_source` | Direct Groww, planned then bought in Groww, manual then bought in Groww, planned, or manual. |
+| `plan_status` | `NONE`, `PLANNED`, or `BOUGHT`. |
+
 ## Modernization Dependencies
 
 | Capability | Package or infrastructure | Current status |

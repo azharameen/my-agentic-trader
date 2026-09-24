@@ -1,22 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Info } from 'lucide-react';
 import { Sidebar, TabType } from './components/Layout/Sidebar';
+import { SidebarProvider, SidebarInset } from './components/ui/sidebar';
 import { Header } from './components/Layout/Header';
 import { MetricRibbon } from './components/Layout/MetricRibbon';
-import { PendingProposals } from './components/Cockpit/PendingProposals';
-import { OpenPositions } from './components/Cockpit/OpenPositions';
-import { AgentDebateModal } from './components/Cockpit/AgentDebateModal';
-import { SymbolAnalysisModal } from './components/Cockpit/SymbolAnalysisModal';
-import { FloatingCopilot } from './components/Copilot/FloatingCopilot';
-import { ChatContainer } from './components/Copilot/ChatContainer';
 import { CandlestickChart } from './components/Charts/CandlestickChart';
 import { UniverseExplorer } from './components/Universe/UniverseExplorer';
 import { Scorecard } from './components/Performance/Scorecard';
 import { TradeAuditTable } from './components/Performance/TradeAuditTable';
 import { BacktestStudio } from './components/Backtest/BacktestStudio';
 import { SystemHealthView } from './components/Health/SystemHealth';
-import { BeginnerInvestWizard } from './components/Beginner/BeginnerInvestWizard';
-import { DematPortfolioHub } from './components/Portfolio/DematPortfolioHub';
+import { CommandCenter } from './components/CommandCenter/CommandCenter';
+import { Schedules } from './components/Schedules/Schedules';
+import { ChatSidebar } from './components/Layout/ChatSidebar';
 import {
   fetchOverview,
   fetchPositions,
@@ -29,9 +25,11 @@ import {
   triggerScan,
   triggerRunSymbol,
   refreshUniverse,
+  fetchCommandCenterOverview,
 } from './lib/api';
 import {
   OverviewData,
+  CommandCenterOverview,
   OpenPosition,
   TradeProposal,
   HistoricalTrade,
@@ -39,20 +37,20 @@ import {
 } from './types/api';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('invest');
+  const [activeTab, setActiveTab] = useState<TabType>('command');
   const [overview, setOverview] = useState<OverviewData | null>(null);
+  const [commandOverview, setCommandOverview] = useState<CommandCenterOverview | null>(null);
   const [positions, setPositions] = useState<OpenPosition[]>([]);
   const [proposals, setProposals] = useState<TradeProposal[]>([]);
   const [trades, setTrades] = useState<HistoricalTrade[]>([]);
   const [performance, setPerformance] = useState<PerformanceScorecard | null>(null);
 
-  const [selectedProposalForDebate, setSelectedProposalForDebate] = useState<TradeProposal | null>(null);
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
-  const [isRunModalOpen, setIsRunModalOpen] = useState(false);
   const [selectedChartSymbol, setSelectedChartSymbol] = useState('RELIANCE');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
+  const [isCopilotOpen, setIsCopilotOpen] = useState(true);
+  const [chatPrompt, setChatPrompt] = useState<string | undefined>();
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -69,11 +67,13 @@ export const App: React.FC = () => {
         fetchTrades(),
         fetchPerformance(),
       ]);
+      const commandData = await fetchCommandCenterOverview();
       setOverview(oData);
       setPositions(pData);
       setProposals(propData);
       setTrades(tData);
       setPerformance(perfData);
+      setCommandOverview(commandData);
     } catch (err) {
       console.error('Failed to load dashboard data', err);
     } finally {
@@ -83,8 +83,6 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     loadAllData();
-    const interval = setInterval(loadAllData, 10000);
-    return () => clearInterval(interval);
   }, [loadAllData]);
 
   // Connect to SSE event stream for live reactive updates
@@ -141,6 +139,20 @@ export const App: React.FC = () => {
         console.error(err);
       }
     });
+
+    eventSource.addEventListener('COMMAND_CENTER_TICK', () => {
+      loadAllData();
+    });
+
+    eventSource.addEventListener('STOCK_ADDED', () => loadAllData());
+    eventSource.addEventListener('STOCK_UPDATED', () => loadAllData());
+    eventSource.addEventListener('STOCK_REMOVED', () => loadAllData());
+    eventSource.addEventListener('FNO_ADDED', () => loadAllData());
+    eventSource.addEventListener('FNO_UPDATED', () => loadAllData());
+    eventSource.addEventListener('FNO_REMOVED', () => loadAllData());
+    eventSource.addEventListener('MF_ADDED', () => loadAllData());
+    eventSource.addEventListener('MF_UPDATED', () => loadAllData());
+    eventSource.addEventListener('MF_REMOVED', () => loadAllData());
 
     return () => {
       eventSource.close();
@@ -209,8 +221,18 @@ export const App: React.FC = () => {
     setActiveTab('charts');
   };
 
+  const handleOpenInvestmentChat = () => {
+    setChatPrompt("I want to build a new investment plan. Please ask me whatever you need to know before generating anything. Do not assume my capital, risk appetite, or goal.");
+    setIsCopilotOpen(true);
+  };
+
+  const handleToggleChat = () => {
+    setChatPrompt(undefined);
+    setIsCopilotOpen((prev) => !prev);
+  };
+
   return (
-    <div className="flex h-screen bg-background overflow-hidden text-foreground">
+    <SidebarProvider defaultOpen={false} className="h-screen overflow-hidden bg-background text-foreground">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-primary text-primary-foreground font-medium text-xs px-4 py-3 rounded-xl shadow-2xl border border-border flex items-center gap-2">
@@ -222,65 +244,42 @@ export const App: React.FC = () => {
       {/* Sidebar */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={(tab) => {
-          if (tab === 'copilot') {
-            setIsCopilotOpen(true);
-          } else {
-            setActiveTab(tab);
-          }
-        }}
+        setActiveTab={(tab) => tab === 'copilot' ? setIsCopilotOpen(true) : setActiveTab(tab)}
         pendingCount={proposals.length}
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header
           overview={overview}
+          commandOverview={commandOverview}
           onRefresh={loadAllData}
           onOpenScanModal={handleRunScan}
-          onOpenRunModal={() => setIsRunModalOpen(true)}
+          onRunSymbol={handleRunSymbol}
           onRefreshUniverse={handleRefreshUniverse}
+          onToggleChat={handleToggleChat}
           isRefreshing={isRefreshing}
         />
 
         <main className="flex-1 overflow-y-auto p-6">
-          {/* Tab 0: Smart Investing (Beginner Wizard & Portfolio Health) */}
-          {activeTab === 'invest' && (
-            <BeginnerInvestWizard onShowToast={showToast} />
-          )}
-
-          {/* Tab 0.5: Demat & Groww Portfolio Hub */}
-          {activeTab === 'demat' && (
-            <DematPortfolioHub
+          {/* Tab: Command Center (unified command surface — everything owned, in one screen) */}
+          {activeTab === 'command' && (
+            <CommandCenter
               onShowToast={showToast}
+              onOpenInvestmentChat={handleOpenInvestmentChat}
+              proposals={proposals}
+              positions={positions}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onClosePosition={handleClosePosition}
               onSelectSymbolForChart={handleSelectSymbolForChart}
             />
           )}
 
           {/* Top Portfolio Ribbon on relevant views */}
-          {(activeTab === 'cockpit' || activeTab === 'performance') && (
+          {activeTab === 'performance' && (
             <MetricRibbon overview={overview} />
           )}
-
-          {/* Tab 1: Command Cockpit */}
-          {activeTab === 'cockpit' && (
-            <div className="space-y-8">
-              <PendingProposals
-                proposals={proposals}
-                onApprove={handleApprove}
-                onReject={handleReject}
-                onViewDebate={(p) => setSelectedProposalForDebate(p)}
-              />
-              <OpenPositions
-                positions={positions}
-                onClosePosition={handleClosePosition}
-                onSelectSymbolForChart={handleSelectSymbolForChart}
-              />
-            </div>
-          )}
-
-          {/* Tab 2: AI Copilot Standalone View */}
-          {activeTab === 'copilot' && <ChatContainer />}
 
           {/* Tab 3: Candlestick Explorer */}
           {activeTab === 'charts' && (
@@ -308,30 +307,23 @@ export const App: React.FC = () => {
           {activeTab === 'backtest' && <BacktestStudio />}
 
           {/* Tab 7: System Health & Regime */}
+          {activeTab === 'schedules' && <Schedules onShowToast={showToast} />}
+
+          {/* Tab 8: System Health & Regime */}
           {activeTab === 'health' && <SystemHealthView />}
         </main>
-      </div>
+      </SidebarInset>
 
-      {/* Global Floating AI Copilot Popup (Available across all screens) */}
-      <FloatingCopilot
-        isOpen={isCopilotOpen}
-        onToggle={() => setIsCopilotOpen((prev) => !prev)}
+      {/* Global toggleable right-side AI Copilot chat sidebar */}
+      <ChatSidebar
+        open={isCopilotOpen}
+        onOpenChange={setIsCopilotOpen}
+        onShowToast={showToast}
+        onPortfolioChanged={loadAllData}
+        initialPrompt={chatPrompt}
       />
 
-      {/* Modals */}
-      <AgentDebateModal
-        proposal={selectedProposalForDebate}
-        onClose={() => setSelectedProposalForDebate(null)}
-        onApprove={handleApprove}
-        onReject={handleReject}
-      />
-
-      <SymbolAnalysisModal
-        isOpen={isRunModalOpen}
-        onClose={() => setIsRunModalOpen(false)}
-        onRunSymbol={handleRunSymbol}
-      />
-    </div>
+    </SidebarProvider>
   );
 };
 

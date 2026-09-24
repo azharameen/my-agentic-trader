@@ -44,7 +44,8 @@ def isolated_settings(tmp_path, monkeypatch):
                 cur.execute(
                     "TRUNCATE TABLE trade_audit_log, notification_outbox, research_cache, "
                     "evidence_snapshots, graph_threads, checkpoints, checkpoint_blobs, "
-                    "checkpoint_writes, store, user_portfolios, user_positions, daily_digests CASCADE;"
+                    "checkpoint_writes, store, user_portfolios, user_positions, daily_digests, "
+                    "user_fno_positions, user_mutual_funds CASCADE;"
                 )
     except Exception:  # noqa: BLE001
         pass

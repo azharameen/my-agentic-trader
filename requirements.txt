@@ -50,7 +50,6 @@ uvicorn>=0.28.0
 
 
 # --- Broker & Context Integration (Read-Only Groww, ADR-035) --------------
-growwapi>=0.1.0
 pyotp>=2.9.0
 
 # --- Testing (dev only) ------------------------------------------------------

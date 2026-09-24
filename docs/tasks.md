@@ -23,10 +23,11 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - **Phase 7: Telegram Usability & Visual Analytics (Completed):** T-034 (Telegram usability suite), T-035 (incremental OHLCV caching), T-036 (React visual analytics web dashboard).
 - **Phase 8: Complete Interactive Web Application (Completed):** T-037 (Full-featured React + TypeScript Cockpit, HITL Approvals, Streaming Copilot, SSE Event Bus, Multi-Container Docker).
 - **Phase 9: Systematic Alpha & Advanced Risk Evolution (Active Roadmap):** T-038 (dynamic ATR trailing stops), T-039 (sector rotation & RS ranking), T-040 (multi-timeframe confluence), T-041 (sector concentration risk gates), T-042 (chart annotations & Telegram visual snapshots), T-043 (Monte Carlo bootstrap simulator).
-- **Phase 10: Beginner Wealth Copilot & Enhanced User Journey (Completed):** T-044 (affordability bands, GTT helper, 2-tranche compounding, peace-of-mind score, zen briefing).
+- **Phase 10: Conversational Investment Planning (Retired UI, retained agent capability):** T-044 (affordability bands, GTT helper, 2-tranche basket planning).
 - **Phase 11: Read-Only Groww Portfolio & Margin Synchronization (Completed):** T-045 (TOTP auth, holdings/margin read-only sync).
-- **Phase 12: Zero-Touch Demat & Groww Portfolio Hub (Completed):** T-046 (auto-sync, mutual fund folios, AI portfolio doctor, net worth ribbon).
+- **Phase 12: Zero-Touch Demat & Groww Portfolio Hub (Retired UI, retained sync infrastructure):** T-046 (auto-sync, mutual fund persistence, Command Center integration).
 - **Phase 13: Groww-First Read-Only Market Data & Margin Visibility (Completed):** T-047 (Groww-first historical/live data with yfinance fallback, informational margin-affordability warning on proposals, instrument master, test-isolation hardening, ADR-036).
+- **Phase 14: Unified Database-Backed Portfolio Command Center (Completed):** T-048 (Groww persistence, position fallback, planning deduplication, earnings totals, provenance, and single portfolio display, ADR-037).
 
 ---
 
@@ -35,9 +36,9 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 | Task ID | Status | Priority | Related ADR | Scope & Readiness Summary |
 |---|---|---|---|---|
 | **T-047** | `done` | High | ADR-036 | Groww-First Read-Only Market Data, Margin & Instrument Master Extension |
-| **T-046** | `done` | High | ADR-035 | Phase 12: Zero-Touch Demat & Groww Portfolio Hub (Auto-Sync, Mutual Funds Folios, AI Doctor Reviews, Net Worth Ribbon) |
+| **T-046** | `done` | High | ADR-035 | Phase 12: Groww auto-sync and portfolio persistence; standalone Hub and AI Doctor UI retired during Command Center consolidation |
 | **T-045** | `done` | High | ADR-035 | Phase 11: Read-Only Groww Portfolio & Margin Synchronization |
-| **T-044** | `done` | High | ADR-034 | Phase 10: Beginner Wealth Copilot & Enhanced User Journey (Affordability Bands, GTT Helper, 2-Tranche Exits, Peace of Mind Score, Zen Briefing) |
+| **T-044** | `done` | High | ADR-034 | Phase 10: Conversational basket planning with affordability bands, GTT guidance, and 2-tranche planning; standalone wizard and digest/reinvestment UI retired |
 | **T-039** | `done` | High | ADR-029 | Sector Relative Strength (RS) Ranking & Rotation Engine |
 | **T-040** | `done` | High | ADR-030 | Multi-Timeframe (MTF) Daily + Weekly Trend Confluence Screener |
 | **T-041** | `done` | High | ADR-031 | Deterministic Sector Concentration & Correlation Risk Gates |
@@ -77,7 +78,22 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 
 ## 3. Active Implementation Tasks (`active`)
 
-*(Currently 0 active implementation tasks. Ready for Gate 2 transition upon operator approval.)*
+### T-048 Unified Database-Backed Portfolio Command Center
+- Status: `done`
+- Priority: `High`
+- Related ADRs: [ADR-037](architecture-decisions.md#adr-037-database-backed-unified-portfolio-command-center)
+- Completed Milestones:
+  - **ST-048.1: Canonical persistence and merge rules**
+    - [x] Persist Groww company/ISIN, broker source, investment source, and plan status on `user_positions`.
+    - [x] Merge a Groww symbol into an existing planned/manual row and retire duplicate active rows.
+    - [x] Fall back from denied/empty settled holdings to positive CASH positions.
+  - **ST-048.2: Unified totals and display**
+    - [x] Add invested capital, current value, realized earnings, unrealized earnings, and total earnings to the Command Center overview.
+    - [x] Display all stock rows with origin and plan status in the main table.
+    - [x] Restrict the Groww panel to connection, sync, cash, orders, and diagnostics.
+  - **ST-048.3: Verification**
+    - [x] Pass the full Python test suite after the local PostgreSQL test hang is resolved.
+    - [x] Frontend TypeScript/build passes.
 
 ---
 
@@ -369,7 +385,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
   - **ST-047.6: Conversational Live Quote Tool**
     - [x] Added `get_groww_quote(symbol)` read-only tool to `app/chat_agent.py` (LTP, day change, day range, OHLC, 52-week range) and wired it into the agent tool list + system prompt, so the operator can ask "what's RELIANCE at right now".
   - **ST-047.6: Verification & Documentation Sync**
-    - [x] Added/extended unit tests: `tests/test_groww_client.py` (new SDK-backed methods, batching, fail-closed), `tests/test_market_data.py` (Groww-first dispatcher + fallback).
+    - [x] Added/extended unit tests: `tests/test_groww_client.py` (new HTTP methods, batching, fail-closed), `tests/test_market_data.py` (Groww-first dispatcher + fallback).
     - [x] `pytest -q` passing on all touched modules.
     - [x] `docs/architecture.md`, `docs/reference.md`, `docs/prd.md`, `docs/architecture-decisions.md` synchronized.
   - **Deferred (tracked, not blocking):** Wiring `get_all_instruments`/tick-size into `risk.py` position-sizing rounding — no evidence yet of a real tick-size sizing defect (YAGNI); revisit if a fractional-tick instrument surfaces in production.
@@ -385,12 +401,10 @@ after its entry criteria are met and all preceding gate conditions are satisfied
   - **ST-046.2: Multi-Asset Class Persistence & Overview Calculation**
     - [x] Added `user_mutual_funds` table and indices in `app/db.py`.
     - [x] Implemented `get_portfolio_overview()` calculating combined Net Worth, Equity value, Mutual Fund folios, Cash & Margin.
-  - **ST-046.3: AI Portfolio Doctor Engine**
-    - [x] Implemented `evaluate_portfolio_ai_doctor(user_id)` in `app/portfolio_manager.py` rating positions as `TAKE_PROFIT_TRANCHE_1`, `HEALTHY_SWING`, `DEFENSE_ALERT`, or `RISK_FREE_RUNNER`.
-    - [x] Exposed `POST /api/v1/portfolio/ai-doctor`, `GET /api/v1/groww/portfolio-overview`, and `GET /api/v1/groww/mutual-funds` in `app/dashboard_api.py`.
-  - **ST-046.4: Dedicated Frontend Demat & Groww Hub**
-    - [x] Created `frontend/src/components/Portfolio/DematPortfolioHub.tsx` with Net Worth Ribbon, Demat Equities table, Mutual Funds cards, and AI Doctor review drawer.
-    - [x] Added `Demat & Groww Hub` navigation tab to sidebar (`frontend/src/components/Layout/Sidebar.tsx` and `frontend/src/App.tsx`).
+  - **ST-046.3: Retired legacy Demat UI workflows**
+    - [x] Removed the standalone AI Portfolio Doctor route and implementation.
+    - [x] Removed the standalone Demat/Groww Hub screen and frontend API wrappers.
+    - [x] Retained Groww read-only client methods for future diagnostics and integrations.
   - **ST-046.5: Verification & Production Container Build**
     - [x] Passed 100% of unit tests (`pytest -q`).
     - [x] Production bundle built (`npm run build`) and Docker containers live (`docker compose up -d --build`).
@@ -411,11 +425,11 @@ after its entry criteria are met and all preceding gate conditions are satisfied
     - [x] Implement Target 1 (50% exit) and Target 2 (50% runner) in `app/models_basket.py` & `app/portfolio_manager.py`
     - [x] Implement dynamic Break-Even trailing stop ratcheting when price gains $\ge +4\%$
     - [x] Implement True Net P&L calculation with STT friction and STCG tax (20%)
-  - **ST-044.4: Daily Zen Briefings & React Frontend Enhancements**
-    - [x] Enhance `app/digest_generator.py` with Zen mode status and 48h pre-earnings warnings
-    - [x] Upgrade `frontend/src/components/Beginner/BeginnerInvestWizard.tsx` with Goal selector, Peace of Mind score, GTT helper card, 2-tranche progress bars, and Net P&L transparency
+  - **ST-044.4: Retired legacy Beginner UI workflows**
+    - [x] Removed the standalone Beginner Invest Wizard and daily digest HTTP workflow.
+    - [x] Preserved basket generation and batch confirmation for the conversational investment-plan flow.
   - **ST-044.5: Verification & Container Packaging**
-    - [x] Comprehensive unit tests in `tests/test_basket_generator.py`, `tests/test_portfolio_manager.py`, `tests/test_digest_generator.py`, `tests/test_beginner_api_routes.py` with 100% test pass rate
+    - [x] Updated portfolio tests after removing digest and reinvestment workflows.
     - [x] Frontend production build `npm run build`
     - [x] Docker container build `docker compose build` & `docker compose up -d`
 
@@ -425,10 +439,10 @@ after its entry criteria are met and all preceding gate conditions are satisfied
 - Related ADRs: [ADR-035](architecture-decisions.md#adr-035-read-only-groww-api-integration-for-portfolio--margin-synchronization)
 - Completed Milestones:
   - **ST-045.1: Configuration, Settings & Secrets**
-    - [x] Add `growwapi` and `pyotp` dependencies to `requirements.txt`
+    - [x] Add `pyotp` dependency to `requirements.txt`; later removed `growwapi` after the curl-only client landed.
     - [x] Add `GROWW_ENABLED`, `GROWW_API_KEY`, `GROWW_API_SECRET`, `GROWW_ACCESS_TOKEN` to `config/settings.py` and `.env.example`
   - **ST-045.2: Read-Only Client Engine & Invariant Enforcement**
-    - [x] Implement `app/groww_client.py` with TOTP / access token authentication and caching
+    - [x] Implement `app/groww_client.py` with HTTP auth / access token handling and caching
     - [x] Implement `get_user_margin()`, `get_holdings()`, `get_positions()`, and `get_orders()`
     - [x] Enforce ADR-002 fail-closed order guard (explicit `RuntimeError` on order creation/modification)
   - **ST-045.3: REST Endpoints & Chat Copilot Tooling**
@@ -436,7 +450,7 @@ after its entry criteria are met and all preceding gate conditions are satisfied
     - [x] Register `get_groww_account_summary` in `app/chat_agent.py` for conversational queries
   - **ST-045.4: Frontend UI Integrations**
     - [x] Add API types and fetchers in `frontend/src/types/api.ts` and `frontend/src/lib/api.ts`
-    - [x] Add Groww connection indicator, auto-fill budget button, and Demat holdings import in `BeginnerInvestWizard.tsx`
+    - [x] Retired the old wizard-only Groww connection indicator, budget auto-fill, and Demat import UI after moving synchronization into the Command Center data flow.
   - **ST-045.5: Verification & Container Build**
     - [x] Comprehensive tests in `tests/test_groww_client.py` and `tests/test_groww_api_routes.py` with 100% test pass rate
     - [x] Build frontend bundle (`npm run build`) and Docker containers (`docker compose build` / `up -d`)

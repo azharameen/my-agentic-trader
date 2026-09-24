@@ -270,6 +270,11 @@ sidecar container (ADR-023):
 - `evidence_snapshots`: Immutable JSON evidence payloads with source provenance.
 - `graph_threads`: Active thread indexing for time-travel queries.
 - `data/universe/`: Runtime local cache for NIFTY 100 constituent CSV files.
+- `user_positions`: Canonical stock ledger for Groww-synced holdings, planned
+  positions, manual entries, cost basis, current value, P&L, provenance, and plan
+  lifecycle.
+- `groww_sync_runs`: Audit trail for broker sync attempts, including partial scope
+  failures.
 
 ## Failure Policy
 
@@ -292,9 +297,15 @@ sidecar container (ADR-023):
   research agents.
 - Market data is Groww-first with automatic Yahoo Finance fallback (ADR-036):
   `app/market_data.py` prefers Groww historical candles when configured, and
-  `app/groww_client.py` exposes read-only live quote/LTP/OHLC and margin-estimate
-  methods; an informational (non-blocking) margin-affordability line is surfaced
-  on the Telegram trade proposal card via `graph._calculate_risk`.
+   `app/groww_client.py` exposes read-only live quote/LTP/OHLC and margin-estimate
+   methods; an informational (non-blocking) margin-affordability line is surfaced
+   on the Telegram trade proposal card via `graph._calculate_risk`.
+- The Command Center reads the PostgreSQL portfolio ledger after a stale-check
+  sync. It displays stocks, F&O, mutual funds, invested capital, current value,
+  realized earnings, unrealized earnings, total earnings, and broker/planning
+  provenance in one view. Groww access failures are partial and explicit; they do
+  not fabricate holdings or silently clear previously persisted broker rows
+  (ADR-037).
 
 ## Related Documents
 

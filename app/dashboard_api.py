@@ -12,14 +12,13 @@ Provides comprehensive REST and Server-Sent Events (SSE) endpoints for:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,10 +26,8 @@ from pydantic import BaseModel
 
 from app import (
     backtester,
-    basket_generator,
     chat_agent,
-    db,
-    digest_generator,
+    command_center,
     evaluation,
     events,
     executor,
@@ -42,6 +39,7 @@ from app import (
     portfolio_manager,
     proposals,
     regime,
+    scheduler_manager,
     screener,
     universe,
 )
@@ -65,6 +63,11 @@ app.add_middleware(
 
 STATIC_DIR = Path(__file__).parent / "static"
 FRONTEND_DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    """Bind the running event loop for thread-safe SSE broadcasts and start polling."""
+    events.bind_main_loop()
 
 
 # --------------------------------------------------------------------------- #
@@ -99,6 +102,58 @@ class RunSymbolRequest(BaseModel):
     symbol: str
 
 
+class ManualStockRequest(BaseModel):
+    symbol: str
+    shares: int
+    entry_price: float
+    stop_loss_price: Optional[float] = None
+    target_price: Optional[float] = None
+    sector: Optional[str] = None
+
+
+class ManualStockUpdateRequest(BaseModel):
+    shares: Optional[int] = None
+    entry_price: Optional[float] = None
+    stop_loss_price: Optional[float] = None
+    target_price: Optional[float] = None
+
+
+class ManualFnoRequest(BaseModel):
+    symbol: str
+    instrument_type: str  # FUT | CE | PE
+    quantity: int
+    entry_price: float
+    lot_size: int = 1
+    strike_price: Optional[float] = None
+    expiry_date: Optional[str] = None
+
+
+class ManualFnoUpdateRequest(BaseModel):
+    quantity: Optional[int] = None
+    entry_price: Optional[float] = None
+    current_price: Optional[float] = None
+    status: Optional[str] = None
+
+
+class ManualMutualFundRequest(BaseModel):
+    scheme_name: str
+    units: float
+    nav: float
+    invested_amount: float
+    folio_number: str = ""
+    asset_category: str = "EQUITY"
+
+
+class ManualMutualFundUpdateRequest(BaseModel):
+    units: Optional[float] = None
+    nav: Optional[float] = None
+    invested_amount: Optional[float] = None
+
+
+class ScheduleEnabledRequest(BaseModel):
+    enabled: bool
+
+
 # --------------------------------------------------------------------------- #
 # System & Overview Endpoints
 # --------------------------------------------------------------------------- #
@@ -106,6 +161,53 @@ class RunSymbolRequest(BaseModel):
 def get_health() -> dict[str, Any]:
     """System health, PostgreSQL pool status, and scheduler state."""
     return health.get_summary()
+
+
+@app.get("/api/schedules")
+def list_schedules() -> list[dict[str, Any]]:
+    return [scheduler_manager.schedule_view(row) for row in scheduler_manager.list_schedules()]
+
+
+@app.get("/api/schedules/{schedule_id}")
+def get_schedule(schedule_id: str) -> dict[str, Any]:
+    schedule = scheduler_manager.get_schedule(schedule_id)
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return scheduler_manager.schedule_view(schedule)
+
+
+@app.post("/api/schedules", status_code=201)
+def create_schedule(schedule: scheduler_manager.ScheduleInput) -> dict[str, Any]:
+    return scheduler_manager.schedule_view(scheduler_manager.create_schedule(schedule))
+
+
+@app.put("/api/schedules/{schedule_id}")
+def update_schedule(schedule_id: str, schedule: scheduler_manager.ScheduleInput) -> dict[str, Any]:
+    updated = scheduler_manager.update_schedule(schedule_id, schedule)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return scheduler_manager.schedule_view(updated)
+
+
+@app.patch("/api/schedules/{schedule_id}/enabled")
+def set_schedule_enabled(schedule_id: str, request: ScheduleEnabledRequest) -> dict[str, Any]:
+    updated = scheduler_manager.set_enabled(schedule_id, request.enabled)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return scheduler_manager.schedule_view(updated)
+
+
+@app.post("/api/schedules/{schedule_id}/run", status_code=status.HTTP_202_ACCEPTED)
+def run_schedule_now(schedule_id: str) -> dict[str, str]:
+    if not scheduler_manager.request_run(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "QUEUED"}
+
+
+@app.delete("/api/schedules/{schedule_id}", status_code=204)
+def delete_schedule(schedule_id: str) -> None:
+    if not scheduler_manager.delete_schedule(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
 
 
 @app.get("/api/overview")
@@ -185,7 +287,9 @@ def get_proposal_details(proposal_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/proposals/{proposal_id}/approve")
-def approve_proposal_endpoint(proposal_id: str, req: Optional[ApproveProposalRequest] = None) -> dict[str, Any]:
+def approve_proposal_endpoint(
+    proposal_id: str, req: Optional[ApproveProposalRequest] = None
+) -> dict[str, Any]:
     """Approve a pending trade proposal and execute paper fill."""
     notes = req.notes if req and req.notes else "Approved via Web Cockpit"
     try:
@@ -199,7 +303,9 @@ def approve_proposal_endpoint(proposal_id: str, req: Optional[ApproveProposalReq
 
 
 @app.post("/api/proposals/{proposal_id}/reject")
-def reject_proposal_endpoint(proposal_id: str, req: Optional[RejectProposalRequest] = None) -> dict[str, Any]:
+def reject_proposal_endpoint(
+    proposal_id: str, req: Optional[RejectProposalRequest] = None
+) -> dict[str, Any]:
     """Reject a pending trade proposal with reason."""
     reason = req.reason if req and req.reason else "Rejected by operator"
     try:
@@ -240,30 +346,34 @@ def get_positions() -> list[dict[str, Any]]:
         target_dist_pct = round(((target - curr) / curr * 100), 2) if curr > 0 else 0.0
         risk_amt = round(max(0.0, (fill - hard_stop) * qty), 2)
 
-        results.append({
-            "trade_id": t["trade_id"],
-            "symbol": symbol,
-            "entry_date": t["timestamp"],
-            "fill_price": fill,
-            "current_price": curr,
-            "quantity": qty,
-            "soft_stop": soft_stop,
-            "hard_stop": hard_stop,
-            "target_price": target,
-            "strategy_name": strategy,
-            "unrealized_pnl": unrealized_pnl,
-            "unrealized_pnl_pct": unrealized_pct,
-            "stop_dist_pct": stop_dist_pct,
-            "target_dist_pct": target_dist_pct,
-            "risk_amount": risk_amt,
-            "thesis": t.get("thesis", ""),
-        })
+        results.append(
+            {
+                "trade_id": t["trade_id"],
+                "symbol": symbol,
+                "entry_date": t["timestamp"],
+                "fill_price": fill,
+                "current_price": curr,
+                "quantity": qty,
+                "soft_stop": soft_stop,
+                "hard_stop": hard_stop,
+                "target_price": target,
+                "strategy_name": strategy,
+                "unrealized_pnl": unrealized_pnl,
+                "unrealized_pnl_pct": unrealized_pct,
+                "stop_dist_pct": stop_dist_pct,
+                "target_dist_pct": target_dist_pct,
+                "risk_amount": risk_amt,
+                "thesis": t.get("thesis", ""),
+            }
+        )
 
     return results
 
 
 @app.post("/api/positions/{trade_id}/close")
-def close_position_endpoint(trade_id: str, req: Optional[ClosePositionRequest] = None) -> dict[str, Any]:
+def close_position_endpoint(
+    trade_id: str, req: Optional[ClosePositionRequest] = None
+) -> dict[str, Any]:
     """Manually exit/close an open paper trade early at market price."""
     trades = executor.fetch_all_trades()
     trade = next((t for t in trades if t["trade_id"] == trade_id), None)
@@ -271,18 +381,29 @@ def close_position_endpoint(trade_id: str, req: Optional[ClosePositionRequest] =
         raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found.")
 
     if trade["status"] != "OPEN_PAPER":
-        raise HTTPException(status_code=400, detail=f"Trade {trade_id} is already {trade['status']}.")
+        raise HTTPException(
+            status_code=400, detail=f"Trade {trade_id} is already {trade['status']}."
+        )
 
     symbol = trade["symbol"]
     snapshot = screener.get_symbol_snapshot(symbol)
-    exit_price = req.exit_price if req and req.exit_price else (snapshot["daily_close"] if snapshot else trade["fill_price"])
+    exit_price = (
+        req.exit_price
+        if req and req.exit_price
+        else (snapshot["daily_close"] if snapshot else trade["fill_price"])
+    )
     reason = req.reason if req and req.reason else "MANUAL_WEB_EXIT"
 
     try:
         closed = executor.close_trade(trade_id, exit_price=exit_price, mistake_category=reason)
         events.broadcast_event(
             "POSITION_CLOSED",
-            {"trade_id": trade_id, "symbol": symbol, "exit_price": exit_price, "realized_pnl": closed["realized_pnl"]},
+            {
+                "trade_id": trade_id,
+                "symbol": symbol,
+                "exit_price": exit_price,
+                "realized_pnl": closed["realized_pnl"],
+            },
         )
         return closed
     except Exception as exc:
@@ -337,18 +458,22 @@ def get_candles(symbol: str) -> list[dict[str, Any]]:
         candles = []
         for idx, row in frame.iterrows():
             time_str = str(idx.date() if hasattr(idx, "date") else idx)[:10]
-            candles.append({
-                "time": time_str,
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
-            })
+            candles.append(
+                {
+                    "time": time_str,
+                    "open": round(float(row["Open"]), 2),
+                    "high": round(float(row["High"]), 2),
+                    "low": round(float(row["Low"]), 2),
+                    "close": round(float(row["Close"]), 2),
+                    "volume": int(row["Volume"]),
+                }
+            )
         return candles
     except Exception as exc:
         logger.exception("Failed to load candles for %s", clean_sym)
-        raise HTTPException(status_code=404, detail=f"No candlestick data available for {clean_sym}: {exc}") from exc
+        raise HTTPException(
+            status_code=404, detail=f"No candlestick data available for {clean_sym}: {exc}"
+        ) from exc
 
 
 @app.get("/api/levels/{symbol}")
@@ -359,7 +484,10 @@ def get_symbol_levels(symbol: str) -> dict[str, Any]:
     prop = next((p for p in props if p["symbol"].upper() == clean_sym), None)
 
     trades = executor.fetch_all_trades()
-    open_trade = next((t for t in trades if t["symbol"].upper() == clean_sym and t["status"] == "OPEN_PAPER"), None)
+    open_trade = next(
+        (t for t in trades if t["symbol"].upper() == clean_sym and t["status"] == "OPEN_PAPER"),
+        None,
+    )
 
     if prop:
         return {
@@ -377,11 +505,15 @@ def get_symbol_levels(symbol: str) -> dict[str, Any]:
             "symbol": clean_sym,
             "source": "POSITION",
             "status": open_trade.get("status", "OPEN_PAPER"),
-            "entry_price": float(open_trade.get("fill_price") or open_trade.get("entry_price") or 0.0),
+            "entry_price": float(
+                open_trade.get("fill_price") or open_trade.get("entry_price") or 0.0
+            ),
             "target_price": float(open_trade.get("target_price") or 0.0),
             "soft_stop": float(open_trade.get("soft_stop") or 0.0),
             "hard_stop": float(open_trade.get("hard_stop") or 0.0),
-            "trailing_stop": float(open_trade.get("trailing_stop") or 0.0) if open_trade.get("trailing_stop") else None,
+            "trailing_stop": float(open_trade.get("trailing_stop") or 0.0)
+            if open_trade.get("trailing_stop")
+            else None,
         }
     return {
         "symbol": clean_sym,
@@ -430,7 +562,11 @@ def run_backtest_endpoint(req: BacktestRequest) -> dict[str, Any]:
                 "average_r": report.average_r,
             },
             "equity_curve": [
-                {"time": str(pt.get("date", "")), "equity": pt.get("equity", 0.0), "drawdown_pct": pt.get("drawdown_pct", 0.0)}
+                {
+                    "time": str(pt.get("date", "")),
+                    "equity": pt.get("equity", 0.0),
+                    "drawdown_pct": pt.get("drawdown_pct", 0.0),
+                }
                 for pt in report.equity_curve
             ],
             "trades": [
@@ -532,34 +668,10 @@ def trigger_run_symbol_endpoint(symbol: str, background_tasks: BackgroundTasks) 
 # --------------------------------------------------------------------------- #
 # Beginner User Journey & Smart Basket Endpoints
 # --------------------------------------------------------------------------- #
-class ExitPositionRequest(BaseModel):
-    position_id: str
-    exit_price: float
-    shares_to_exit: Optional[int] = None
-    user_id: Optional[str] = "default_user"
-
-
-@app.post("/api/v1/strategy/generate-basket")
-def generate_basket_endpoint(req: models_basket.BasketRequest) -> models_basket.StrategyBasket:
-    """Generate a risk-diversified, beginner-friendly 3-5 stock investment basket."""
-    try:
-        basket = basket_generator.generate_strategy_basket(
-            capital=req.capital,
-            risk_vibe=req.risk_vibe,
-            goal=req.goal,
-            max_stocks=req.max_stocks,
-        )
-        portfolio_manager.create_user_portfolio_from_basket(
-            basket, user_id=req.user_id or "default_user"
-        )
-        return basket
-    except Exception as exc:
-        logger.exception("Failed to generate strategy basket: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @app.post("/api/v1/portfolio/confirm-executions")
-def confirm_executions_endpoint(req: models_basket.BatchExecutionRequest) -> models_basket.PortfolioSummary:
+def confirm_executions_endpoint(
+    req: models_basket.BatchExecutionRequest,
+) -> models_basket.PortfolioSummary:
     """Confirm user execution on broker with actual filled prices and slippage tracking."""
     try:
         summary = portfolio_manager.confirm_batch_execution(req)
@@ -572,47 +684,14 @@ def confirm_executions_endpoint(req: models_basket.BatchExecutionRequest) -> mod
 
 
 @app.get("/api/v1/portfolio/active-health")
-def get_active_portfolio_health_endpoint(user_id: str = "default_user") -> Optional[models_basket.PortfolioSummary]:
+def get_active_portfolio_health_endpoint(
+    user_id: str = "default_user",
+) -> Optional[models_basket.PortfolioSummary]:
     """Fetch active portfolio health, live prices, target progress, and alerts."""
     try:
         return portfolio_manager.get_user_portfolio(user_id=user_id)
     except Exception as exc:
         logger.exception("Failed to fetch active portfolio health: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/api/v1/portfolio/exit-position")
-def exit_position_endpoint(req: ExitPositionRequest) -> models_basket.ReinvestmentSuggestion:
-    """Record manual position exit (partial or full), calculate realized P&L, and suggest capital reinvestment."""
-    try:
-        return portfolio_manager.confirm_position_exit(
-            position_id=req.position_id,
-            exit_price=req.exit_price,
-            shares_to_exit=req.shares_to_exit,
-            user_id=req.user_id or "default_user",
-        )
-    except Exception as exc:
-        logger.exception("Failed to exit position: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/digests/morning")
-def get_morning_digest_endpoint(user_id: str = "default_user") -> models_basket.DailyDigest:
-    """Fetch or generate pre-market morning mood briefing."""
-    try:
-        return digest_generator.generate_morning_mood_digest(user_id=user_id)
-    except Exception as exc:
-        logger.exception("Failed to generate morning digest: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/digests/evening")
-def get_evening_digest_endpoint(user_id: str = "default_user") -> models_basket.DailyDigest:
-    """Fetch or generate post-market evening health report."""
-    try:
-        return digest_generator.generate_evening_health_digest(user_id=user_id)
-    except Exception as exc:
-        logger.exception("Failed to generate evening digest: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -623,13 +702,9 @@ def get_evening_digest_endpoint(user_id: str = "default_user") -> models_basket.
 def get_groww_status_endpoint() -> groww_client.GrowwStatus:
     """Check connectivity and authentication status with Groww Trading/Cloud API."""
     client = groww_client.get_groww_client()
-    # Trigger non-blocking auto-sync if configured
-    if client.is_configured():
-        try:
-            client.auto_sync_if_configured()
-        except Exception:  # noqa: BLE001
-            pass
-    return client.get_connection_status()
+    result = client.get_connection_status()
+    result.scope_warning = client._scope_warning or client.portfolio_access_error
+    return result
 
 
 @app.get("/api/v1/groww/balance")
@@ -646,6 +721,18 @@ def get_groww_holdings_endpoint() -> list[groww_client.GrowwHolding]:
     return client.get_holdings()
 
 
+@app.get("/api/v1/groww/access-diagnostics")
+def get_groww_access_diagnostics() -> dict[str, Any]:
+    client = groww_client.get_groww_client()
+    status = client.get_connection_status()
+    return {
+        "authenticated": status.authenticated,
+        "holdings_access_error": client.portfolio_access_error,
+        "scope_warning": client._scope_warning,
+        "hint": "If authentication succeeds but portfolio reads return 403, check the active Groww API key permissions/subscription. Orders, positions, and Demat holdings are separate read scopes/resources.",
+    }
+
+
 @app.get("/api/v1/groww/positions")
 def get_groww_positions_endpoint() -> list[groww_client.GrowwPosition]:
     """Fetch open intraday/delivery positions from Groww."""
@@ -653,15 +740,25 @@ def get_groww_positions_endpoint() -> list[groww_client.GrowwPosition]:
     return client.get_positions()
 
 
+@app.get("/api/v1/groww/orders")
+def get_groww_orders_endpoint() -> list[dict[str, Any]]:
+    """Fetch today's Groww orders through the read-only Groww HTTP client."""
+    return groww_client.get_groww_client().get_orders()
+
+
 @app.get("/api/v1/groww/mutual-funds")
-def get_groww_mutual_funds_endpoint(user_id: str = "default_user") -> list[groww_client.GrowwMutualFund]:
+def get_groww_mutual_funds_endpoint(
+    user_id: str = "default_user",
+) -> list[groww_client.GrowwMutualFund]:
     """Fetch user's mutual fund folios from database and Groww sync."""
     client = groww_client.get_groww_client()
     return client.get_mutual_funds(user_id=user_id)
 
 
 @app.get("/api/v1/groww/portfolio-overview")
-def get_groww_portfolio_overview_endpoint(user_id: str = "default_user") -> groww_client.GrowwPortfolioOverview:
+def get_groww_portfolio_overview_endpoint(
+    user_id: str = "default_user",
+) -> groww_client.GrowwPortfolioOverview:
     """Fetch complete multi-asset portfolio overview and Net Worth breakdown."""
     client = groww_client.get_groww_client()
     return client.get_portfolio_overview(user_id=user_id)
@@ -670,14 +767,112 @@ def get_groww_portfolio_overview_endpoint(user_id: str = "default_user") -> grow
 @app.post("/api/v1/groww/sync")
 def sync_groww_portfolio_endpoint(user_id: str = "default_user") -> dict[str, Any]:
     """Import and synchronize live Groww Demat holdings into TrAId portfolio monitor."""
-    client = groww_client.get_groww_client()
-    return client.sync_to_portfolio_tracker(user_id=user_id)
+    from app.groww_sync import sync_groww_portfolio
+
+    return sync_groww_portfolio(user_id=user_id)
 
 
-@app.post("/api/v1/portfolio/ai-doctor")
-def run_portfolio_ai_doctor_endpoint(user_id: str = "default_user") -> dict[str, Any]:
-    """Run AI Doctor multi-agent diagnostic across all user's active holdings."""
-    return portfolio_manager.evaluate_portfolio_ai_doctor(user_id=user_id)
+# --------------------------------------------------------------------------- #
+# Command Center: unified holdings, manual entries, and agent signals
+# --------------------------------------------------------------------------- #
+@app.get("/api/v1/command-center/overview")
+def get_command_center_overview(user_id: str = "default_user") -> dict[str, Any]:
+    """Single aggregated payload: Groww holdings + manual stocks/F&O/MF + signals + suggestions."""
+    try:
+        return command_center.get_overview(user_id=user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to build command center overview: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/command-center/stocks")
+def add_manual_stock_endpoint(
+    req: ManualStockRequest, user_id: str = "default_user"
+) -> dict[str, str]:
+    position_id = command_center.add_manual_stock(
+        user_id=user_id,
+        symbol=req.symbol,
+        shares=req.shares,
+        entry_price=req.entry_price,
+        stop_loss_price=req.stop_loss_price,
+        target_price=req.target_price,
+        sector=req.sector,
+    )
+    return {"position_id": position_id}
+
+
+@app.patch("/api/v1/command-center/stocks/{position_id}")
+def update_manual_stock_endpoint(position_id: str, req: ManualStockUpdateRequest) -> dict[str, str]:
+    command_center.update_manual_stock(position_id, **req.model_dump(exclude_none=True))
+    return {"status": "updated"}
+
+
+@app.delete("/api/v1/command-center/stocks/{position_id}")
+def delete_manual_stock_endpoint(position_id: str) -> dict[str, str]:
+    command_center.delete_manual_stock(position_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/v1/command-center/fno")
+def add_fno_endpoint(req: ManualFnoRequest, user_id: str = "default_user") -> dict[str, str]:
+    position_id = command_center.add_fno_position(
+        user_id=user_id,
+        symbol=req.symbol,
+        instrument_type=req.instrument_type,
+        quantity=req.quantity,
+        entry_price=req.entry_price,
+        lot_size=req.lot_size,
+        strike_price=req.strike_price,
+        expiry_date=req.expiry_date,
+    )
+    return {"position_id": position_id}
+
+
+@app.patch("/api/v1/command-center/fno/{position_id}")
+def update_fno_endpoint(position_id: str, req: ManualFnoUpdateRequest) -> dict[str, str]:
+    command_center.update_fno_position(position_id, **req.model_dump(exclude_none=True))
+    return {"status": "updated"}
+
+
+@app.delete("/api/v1/command-center/fno/{position_id}")
+def delete_fno_endpoint(position_id: str) -> dict[str, str]:
+    command_center.delete_fno_position(position_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/v1/command-center/mutual-funds")
+def add_mf_endpoint(req: ManualMutualFundRequest, user_id: str = "default_user") -> dict[str, str]:
+    folio_id = command_center.add_mutual_fund(
+        user_id=user_id,
+        scheme_name=req.scheme_name,
+        units=req.units,
+        nav=req.nav,
+        invested_amount=req.invested_amount,
+        folio_number=req.folio_number,
+        asset_category=req.asset_category,
+    )
+    return {"folio_id": folio_id}
+
+
+@app.patch("/api/v1/command-center/mutual-funds/{folio_id}")
+def update_mf_endpoint(folio_id: str, req: ManualMutualFundUpdateRequest) -> dict[str, str]:
+    command_center.update_mutual_fund(folio_id, **req.model_dump(exclude_none=True))
+    return {"status": "updated"}
+
+
+@app.delete("/api/v1/command-center/mutual-funds/{folio_id}")
+def delete_mf_endpoint(folio_id: str) -> dict[str, str]:
+    command_center.delete_mutual_fund(folio_id)
+    return {"status": "deleted"}
+
+
+@app.get("/api/v1/command-center/deep-dive/{symbol}")
+def get_command_center_deep_dive(symbol: str) -> dict[str, Any]:
+    """Fetch the last completed Bear/Bull/Synthesizer debate for a symbol (no new LLM run)."""
+    debate = command_center.get_deep_dive(symbol.upper())
+    if debate is None:
+        return {"symbol": symbol.upper(), "available": False}
+    return {"symbol": symbol.upper(), "available": True, **debate}
 
 
 # --------------------------------------------------------------------------- #

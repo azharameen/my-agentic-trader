@@ -32,6 +32,7 @@ from app import (
     maintenance,
     observability,
     pipeline,
+    scheduler_manager,
     telegram_bot,
     universe,
 )
@@ -70,8 +71,12 @@ def cmd_refresh_universe(_args: argparse.Namespace) -> None:
     old = universe.get_universe()
     new = universe.get_universe(force_refresh=True)
     delta = universe.diff_universe(old, new)
-    logger.info("Universe refreshed: %d symbols. Added=%s Removed=%s",
-                len(new), delta["added"], delta["removed"])
+    logger.info(
+        "Universe refreshed: %d symbols. Added=%s Removed=%s",
+        len(new),
+        delta["added"],
+        delta["removed"],
+    )
 
 
 def cmd_check_databases(_args: argparse.Namespace) -> None:
@@ -103,7 +108,10 @@ def cmd_history(args: argparse.Namespace) -> None:
     for step in reversed(history):
         logger.info(
             "step=%s next=%s paused_for_approval=%s values=%s",
-            step["created_at"], step["next"], step["paused_for_approval"], step["values"],
+            step["created_at"],
+            step["next"],
+            step["paused_for_approval"],
+            step["values"],
         )
 
 
@@ -148,8 +156,7 @@ def _scheduled_scan() -> None:
         logger.exception("Scheduled scan failed.")
 
 
-
-def _scheduled_groww_sync() -> None:
+def _scheduled_groww_sync() -> dict[str, Any]:
     """apscheduler job: periodic background synchronization of Groww Demat holdings."""
     try:
         from app.groww_client import get_groww_client
@@ -158,8 +165,11 @@ def _scheduled_groww_sync() -> None:
         if client.is_configured():
             res = client.auto_sync_if_configured()
             logger.info("Scheduled Groww auto-sync completed: %s", res)
+            return res
+        return {"status": "SKIPPED", "reason": "Groww is not configured"}
     except Exception:  # noqa: BLE001
         logger.exception("Scheduled Groww sync failed.")
+        return {"status": "ERROR", "reason": "Scheduled Groww sync failed; see engine logs."}
 
 
 def _scheduled_universe_refresh() -> None:
@@ -171,7 +181,7 @@ def _scheduled_universe_refresh() -> None:
         if delta["added"] or delta["removed"]:
             settings = get_settings()
             text = (
-                "\U0001F504 *NIFTY 100 universe updated*\n"
+                "\U0001f504 *NIFTY 100 universe updated*\n"
                 f"Added: {', '.join(delta['added']) or 'none'}\n"
                 f"Removed: {', '.join(delta['removed']) or 'none'}"
             )
@@ -180,33 +190,41 @@ def _scheduled_universe_refresh() -> None:
         logger.exception("Scheduled universe refresh failed.")
 
 
+def _reconcile_scheduled_jobs(scheduler: Any) -> None:
+    actions = {
+        "daily_scan": _scheduled_scan,
+        "groww_demat_sync": _scheduled_groww_sync,
+        "monthly_universe_refresh": _scheduled_universe_refresh,
+    }
+    scheduler_manager.reconcile_scheduler(scheduler, actions)
+    scheduler_manager.run_pending_requests(actions)
+
+
 def _start_scheduler() -> Any:
-    """Wire the daily EOD scan, Groww auto-sync, and monthly universe refresh into apscheduler."""
+    """Start APScheduler and periodically apply shared database job definitions."""
+    from datetime import datetime
+
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
     from apscheduler.schedulers.background import BackgroundScheduler
 
     settings = get_settings()
     scheduler = BackgroundScheduler(timezone=settings.SCHEDULER_TIMEZONE)
+    scheduler_manager.seed_defaults()
+    _reconcile_scheduled_jobs(scheduler)
     scheduler.add_job(
-        _scheduled_scan, "cron",
-        hour=settings.SCAN_CRON_HOUR, minute=settings.SCAN_CRON_MINUTE,
-        day_of_week=settings.SCAN_CRON_DAYS, id="daily_scan",
+        _reconcile_scheduled_jobs,
+        "interval",
+        seconds=5,
+        args=[scheduler],
+        id="schedule_registry_sync",
+        next_run_time=datetime.now().astimezone(),
     )
-    scheduler.add_job(
-        _scheduled_groww_sync, "interval",
-        minutes=15, id="groww_demat_sync",
-    )
-    scheduler.add_job(
-        _scheduled_universe_refresh, "cron",
-        day=int(settings.UNIVERSE_REFRESH_DAY_OF_MONTH), hour=int(settings.UNIVERSE_REFRESH_HOUR),
-        minute=int(settings.UNIVERSE_REFRESH_MINUTE), id="monthly_universe_refresh",
-    )
+    scheduler.add_listener(scheduler_manager.record_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
     scheduler.start()
-    logger.info("Scheduler started: daily scan at %02d:%02d %s (%s), Groww auto-sync every 15m, monthly universe refresh on day %s at %02d:%02d %s.",
-                settings.SCAN_CRON_HOUR, settings.SCAN_CRON_MINUTE,
-                settings.SCHEDULER_TIMEZONE, settings.SCAN_CRON_DAYS,
-                settings.UNIVERSE_REFRESH_DAY_OF_MONTH,
-                int(settings.UNIVERSE_REFRESH_HOUR), int(settings.UNIVERSE_REFRESH_MINUTE),
-                settings.SCHEDULER_TIMEZONE)
+    logger.info(
+        "Scheduler started in %s with database-backed schedule definitions.",
+        settings.SCHEDULER_TIMEZONE,
+    )
     return scheduler
 
 
@@ -249,15 +267,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check-databases", help="Check PostgreSQL database integrity")
     sub.add_parser("backup-databases", help="Check PostgreSQL database backup status")
     sub.add_parser("evaluate", help="Evaluate paper-trade outcomes")
-    history_p = sub.add_parser("history", help="Show full checkpoint history for one symbol (time travel)")
+    history_p = sub.add_parser(
+        "history", help="Show full checkpoint history for one symbol (time travel)"
+    )
     history_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
     bt_p = sub.add_parser("backtest", help="Run historical bar-by-bar walk-forward backtest")
     bt_p.add_argument("symbol", help="NSE symbol, e.g. RELIANCE")
     bt_p.add_argument("--start", required=True, help="Start date YYYY-MM-DD")
     bt_p.add_argument("--end", required=True, help="End date YYYY-MM-DD")
-    bt_p.add_argument("--capital", type=float, default=None, help="Initial portfolio capital in INR")
+    bt_p.add_argument(
+        "--capital", type=float, default=None, help="Initial portfolio capital in INR"
+    )
     dash_p = sub.add_parser("dashboard", help="Start the Visual Analytics Web Dashboard")
-    dash_p.add_argument("--host", default="127.0.0.1", help="Host to bind server (default: 127.0.0.1)")
+    dash_p.add_argument(
+        "--host", default="127.0.0.1", help="Host to bind server (default: 127.0.0.1)"
+    )
     dash_p.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     return parser
 
@@ -269,9 +293,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         except Exception:  # noqa: BLE001
             pass
     settings = get_settings()
-    logger.info("TRADING_MODE=%s CAPITAL=%.2f RISK=%.1f%%",
-                settings.TRADING_MODE, settings.PORTFOLIO_CAPITAL,
-                settings.RISK_PER_TRADE_PCT * 100)
+    logger.info(
+        "TRADING_MODE=%s CAPITAL=%.2f RISK=%.1f%%",
+        settings.TRADING_MODE,
+        settings.PORTFOLIO_CAPITAL,
+        settings.RISK_PER_TRADE_PCT * 100,
+    )
 
     # Auto-create the audit schema on boot.
     observability.configure()

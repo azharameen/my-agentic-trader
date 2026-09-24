@@ -70,6 +70,17 @@ paper trades but must not buy or sell securities automatically.
 3. Store fetched data with timestamp and source.
 4. Use it for exposure and context only; never submit orders.
 
+### Unified portfolio command center
+
+1. Show total capital invested, current portfolio value, unrealized earnings,
+   realized earnings, and total earnings across stocks, F&O, and mutual funds.
+2. Show every active stock in one table with quantity, cost basis, current value,
+   P&L, broker/planning origin, and plan status.
+3. Persist Groww data in PostgreSQL before display. A planned symbol later bought
+   in Groww updates the existing planned row rather than creating a duplicate.
+4. Keep the Groww control panel for connection, force-sync, cash, orders, and
+   permission diagnostics; it is not a second holdings view.
+
 ### Evaluation
 
 1. Freeze the evidence and technical snapshot used for each proposal.
@@ -219,11 +230,10 @@ authority, identity rules, or persistence contract are undefined. Research-only
 source discovery may proceed, but scheduled ingestion requires a documented
 access method, terms review, fallback, freshness rule, and failure behavior.
 
-## Beginner Wealth Copilot & Guided Journey (ADR-034)
+## Conversational Investment Planning (ADR-034)
 
 - **Goal-Adaptive Planning:** Users specify investment capital (e.g. ₹10K to ₹5L) and life goals (`SAFE_GROWTH`, `VACATION_FUND`, `WEALTH_COMPOUNDING`, `LEARNING`).
 - **Affordability Banding:** Smart whole-share price filters for sub-₹30,000 budgets prioritizing high-liquidity stocks under ₹1,500.
 - **Explainability:** Peace of Mind Score ($0-100$), visual Best/Normal/Protected Downside scenario ranges, and plain-English "Why this stock" summaries.
 - **External Broker Guidance:** 1-Click GTT parameter generator (Stop-Loss and Target triggers) for Zerodha / Groww, with traffic light slippage checks.
-- **2-Tranche Compounding:** Target 1 (50% exit to lock in profit) + Target 2 (50% runner with breakeven trailing stop), true net P&L after friction and taxes, and automatic capital recycling.
-
+- **2-Tranche Planning:** Basket responses include Target 1, Target 2, GTT guidance, and true net P&L estimates. The conversational agent handles planning and batch fill confirmation; the retired standalone wizard and automatic reinvestment workflow are not product surfaces.

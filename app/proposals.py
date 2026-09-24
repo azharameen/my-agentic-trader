@@ -9,52 +9,62 @@ from __future__ import annotations
 
 import json
 import logging
+from threading import Lock
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app import db, events, graph
 
 logger = logging.getLogger(__name__)
+_proposals_table_initialized = False
+_proposals_table_lock = Lock()
 
 
 def init_proposals_table() -> None:
     """Create the pending_proposals table and indexes if not existing."""
-    ddl = """
-    CREATE TABLE IF NOT EXISTS pending_proposals (
-        proposal_id     TEXT PRIMARY KEY,
-        symbol          TEXT NOT NULL,
-        strategy_name   TEXT NOT NULL,
-        entry_price     DOUBLE PRECISION NOT NULL,
-        soft_stop       DOUBLE PRECISION NOT NULL,
-        hard_stop       DOUBLE PRECISION NOT NULL,
-        target_price    DOUBLE PRECISION NOT NULL,
-        quantity        INTEGER NOT NULL,
-        risk_amount     DOUBLE PRECISION NOT NULL,
-        risk_to_reward  DOUBLE PRECISION NOT NULL,
-        thesis          TEXT,
-        catalyst_type   TEXT,
-        margin_required DOUBLE PRECISION,
-        margin_available DOUBLE PRECISION,
-        raw_card        TEXT NOT NULL,
-        created_at      TEXT NOT NULL,
-        status          TEXT NOT NULL DEFAULT 'PENDING',
-        decided_at      TEXT,
-        decision_notes  TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_proposals_status ON pending_proposals(status);
-    CREATE INDEX IF NOT EXISTS idx_proposals_symbol ON pending_proposals(symbol);
-    CREATE INDEX IF NOT EXISTS idx_proposals_created ON pending_proposals(created_at DESC);
-    """
-    with db.get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(ddl)
-        # ADR-036: informational Groww margin fields added after initial release.
-        cursor.execute(
-            "ALTER TABLE pending_proposals ADD COLUMN IF NOT EXISTS margin_required DOUBLE PRECISION;"
-        )
-        cursor.execute(
-            "ALTER TABLE pending_proposals ADD COLUMN IF NOT EXISTS margin_available DOUBLE PRECISION;"
-        )
+    global _proposals_table_initialized
+    if _proposals_table_initialized:
+        return
+    with _proposals_table_lock:
+        if _proposals_table_initialized:
+            return
+        ddl = """
+        CREATE TABLE IF NOT EXISTS pending_proposals (
+            proposal_id     TEXT PRIMARY KEY,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
+            entry_price     DOUBLE PRECISION NOT NULL,
+            soft_stop       DOUBLE PRECISION NOT NULL,
+            hard_stop       DOUBLE PRECISION NOT NULL,
+            target_price    DOUBLE PRECISION NOT NULL,
+            quantity        INTEGER NOT NULL,
+            risk_amount     DOUBLE PRECISION NOT NULL,
+            risk_to_reward  DOUBLE PRECISION NOT NULL,
+            thesis          TEXT,
+            catalyst_type   TEXT,
+            margin_required DOUBLE PRECISION,
+            margin_available DOUBLE PRECISION,
+            raw_card        TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'PENDING',
+            decided_at      TEXT,
+            decision_notes  TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_proposals_status ON pending_proposals(status);
+        CREATE INDEX IF NOT EXISTS idx_proposals_symbol ON pending_proposals(symbol);
+        CREATE INDEX IF NOT EXISTS idx_proposals_created ON pending_proposals(created_at DESC);
+        """
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(ddl)
+            # ADR-036: informational Groww margin fields added after initial release.
+            cursor.execute(
+                "ALTER TABLE pending_proposals ADD COLUMN IF NOT EXISTS margin_required DOUBLE PRECISION;"
+            )
+            cursor.execute(
+                "ALTER TABLE pending_proposals ADD COLUMN IF NOT EXISTS margin_available DOUBLE PRECISION;"
+            )
+        _proposals_table_initialized = True
 
 
 def record_proposal(card_data: dict[str, Any], strategy_name: str = "PULLBACK") -> str:
@@ -120,25 +130,27 @@ def fetch_pending_proposals() -> list[dict[str, Any]]:
     proposals = []
     for r in rows:
         debate = graph.get_symbol_debate(r["symbol"])
-        proposals.append({
-            "proposal_id": r["proposal_id"],
-            "symbol": r["symbol"],
-            "strategy_name": r["strategy_name"],
-            "entry_price": r["entry_price"],
-            "soft_stop": r["soft_stop"],
-            "hard_stop": r["hard_stop"],
-            "target_price": r["target_price"],
-            "quantity": r["quantity"],
-            "risk_amount": r["risk_amount"],
-            "risk_to_reward": r["risk_to_reward"],
-            "thesis": r["thesis"],
-            "catalyst_type": r["catalyst_type"],
-            "margin_required": r.get("margin_required"),
-            "margin_available": r.get("margin_available"),
-            "created_at": r["created_at"],
-            "status": r["status"],
-            "debate": debate,
-        })
+        proposals.append(
+            {
+                "proposal_id": r["proposal_id"],
+                "symbol": r["symbol"],
+                "strategy_name": r["strategy_name"],
+                "entry_price": r["entry_price"],
+                "soft_stop": r["soft_stop"],
+                "hard_stop": r["hard_stop"],
+                "target_price": r["target_price"],
+                "quantity": r["quantity"],
+                "risk_amount": r["risk_amount"],
+                "risk_to_reward": r["risk_to_reward"],
+                "thesis": r["thesis"],
+                "catalyst_type": r["catalyst_type"],
+                "margin_required": r.get("margin_required"),
+                "margin_available": r.get("margin_available"),
+                "created_at": r["created_at"],
+                "status": r["status"],
+                "debate": debate,
+            }
+        )
     return proposals
 
 

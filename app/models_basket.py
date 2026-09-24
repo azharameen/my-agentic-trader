@@ -1,6 +1,4 @@
-"""Typed domain models for beginner-friendly strategy baskets, execution confirmations,
-portfolio tracking, and daily digests.
-"""
+"""Typed domain models for strategy baskets, execution confirmations, and portfolio tracking."""
 
 from __future__ import annotations
 
@@ -161,34 +159,3 @@ class PortfolioSummary(BaseModel):
     cash_balance: float
     total_net_pnl: float = Field(default=0.0, description="Total net profit after estimated taxes and charges.")
     active_positions: list[PositionHealthStatus] = Field(default_factory=list)
-
-
-class DailyDigest(BaseModel):
-    """Structured daily evaluation for the user."""
-
-    digest_id: str
-    digest_type: str = Field(description="MORNING_MOOD or EVENING_HEALTH")
-    date_str: str
-    title: str
-    greeting: str
-    market_mood: str
-    portfolio_summary_text: str
-    total_portfolio_value: float
-    daily_pnl_amount: float
-    daily_pnl_pct: float
-    zen_mode: bool = Field(default=False, description="True if portfolio is in peace/zen mode with zero alerts.")
-    zen_message: Optional[str] = Field(default=None, description="Reassuring Zen affirmation message.")
-    positions: list[PositionHealthStatus] = Field(default_factory=list)
-    action_alerts: list[str] = Field(default_factory=list)
-    earnings_alerts: list[str] = Field(default_factory=list)
-
-
-class ReinvestmentSuggestion(BaseModel):
-    """Recycled capital opportunity after exiting a profitable trade."""
-
-    freed_capital: float
-    realized_pnl: float
-    exited_symbol: str
-    estimated_net_pnl: float = Field(default=0.0, description="Net realized profit after taxes & charges.")
-    stcg_tax_deducted: float = Field(default=0.0, description="20% STCG tax allocated.")
-    new_opportunities: list[StockAllocation] = Field(default_factory=list)
